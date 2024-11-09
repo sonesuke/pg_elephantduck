@@ -14,9 +14,7 @@ pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_
 // This function is called when the access method is created.
 #[pg_guard]
 #[no_mangle]
-pub extern "C" fn pg_elephantduck_handler(
-    _fcinfo: pg_sys::FunctionCallInfo,
-) -> *mut pg_sys::TableAmRoutine {
+pub extern "C" fn pg_elephantduck_handler(_fcinfo: pg_sys::FunctionCallInfo) -> *mut pg_sys::TableAmRoutine {
     let table_am_routine = Box::new(pg_sys::TableAmRoutine {
         type_: pg_sys::NodeTag::T_TableAmRoutine,
         // example
