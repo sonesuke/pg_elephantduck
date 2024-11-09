@@ -24,3 +24,5 @@ USER rustuser
 # Install cargo-pgrx and initialize it
 RUN cargo install cargo-pgrx && cargo pgrx init --jobs 4
 
+# setup dev tools
+RUN rustup component add rustfmt clippy
