@@ -1,35 +1,40 @@
+use pgrx::pg_sys;
 use pgrx::prelude::*;
 
-::pgrx::pg_module_magic!();
+pgrx::pg_module_magic!();
 
-#[pg_extern]
-fn hello_pg_elephantduck() -> &'static str {
-    "Hello, pg_elephantduck"
+// Provide the metadata of function because pg_extern macro cannot handle raw pointer of TableAmRoutine.
+#[no_mangle]
+pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_record {
+    static V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
+    &V1
 }
 
-#[cfg(any(test, feature = "pg_test"))]
-#[pg_schema]
-mod tests {
-    use pgrx::prelude::*;
+// The handler function for the access method.
+// This function is called when the access method is created.
+#[pg_guard]
+#[no_mangle]
+pub extern "C" fn pg_elephantduck_handler(
+    _fcinfo: pg_sys::FunctionCallInfo,
+) -> *mut pg_sys::TableAmRoutine {
+    let table_am_routine = Box::new(pg_sys::TableAmRoutine {
+        type_: pg_sys::NodeTag::T_TableAmRoutine,
+        // example
+        // insert: Some(my_insert_function),
+        ..Default::default()
+    });
 
-    #[pg_test]
-    fn test_hello_pg_elephantduck() {
-        assert_eq!("Hello, pg_elephantduck", crate::hello_pg_elephantduck());
-    }
-
+    Box::into_raw(table_am_routine)
 }
 
-/// This module is required by `cargo pgrx test` invocations.
-/// It must be visible at the root of your extension crate.
-#[cfg(test)]
-pub mod pg_test {
-    pub fn setup(_options: Vec<&str>) {
-        // perform one-off initialization when the pg_test framework starts
-    }
+// Register the extention as an access method.
+extension_sql!(
+    r#"
+    CREATE FUNCTION pg_elephantduck_handler(internal) RETURNS table_am_handler
+        AS 'MODULE_PATHNAME', 'pg_elephantduck_handler'
+        LANGUAGE C STRICT;
 
-    #[must_use]
-    pub fn postgresql_conf_options() -> Vec<&'static str> {
-        // return any postgresql.conf settings that are required for your tests
-        vec![]
-    }
-}
+    CREATE ACCESS METHOD elephantduck TYPE TABLE HANDLER pg_elephantduck_handler;
+    "#,
+    name = "create_elephantduck_access_method",
+);
