@@ -1,0 +1,6 @@
+comment = 'pg_elephantduck:  Created by pgrx'
+default_version = '@CARGO_VERSION@'
+module_pathname = '$libdir/pg_elephantduck'
+relocatable = false
+superuser = true
+trusted = false
