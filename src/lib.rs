@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::vec;
+
 use pgrx::info;
 use pgrx::pg_sys::*;
 use pgrx::prelude::*;
@@ -17,7 +20,7 @@ pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_
 #[no_mangle]
 pub extern "C" fn pg_elephantduck_handler(_fcinfo: pg_sys::FunctionCallInfo) -> *mut pg_sys::TableAmRoutine {
     let table_am_routine = Box::new(pg_sys::TableAmRoutine {
-        type_: pg_sys::NodeTag::T_TableAmRoutine,
+        type_: NodeTag::T_TableAmRoutine,
 
         slot_callbacks: Some(pg_elephantduck_slot_callbacks),
         scan_begin: Some(pg_elephantduck_scan_begin),
@@ -69,29 +72,55 @@ pub extern "C" fn pg_elephantduck_handler(_fcinfo: pg_sys::FunctionCallInfo) -> 
     Box::into_raw(table_am_routine)
 }
 
+static mut VIRTUAL_TABLE: std::sync::LazyLock<std::sync::Mutex<HashMap<std::string::String, Vec<Vec<i32>>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_slot_callbacks(_rel: Relation) -> *const TupleTableSlotOps {
     info!("pg_elephantduck_slot_callbacks is called");
-    unimplemented!()
+    // Minimal Implement.
+    // See https://github.com/postgres/postgres/blob/master/src/include/executor/tuptable.h#L33
+    &TTSOpsVirtual
+}
+
+#[allow(dead_code)]
+pub struct ElepanDuckScan {
+    rs_base: TableScanDescData, // Base class from access/relscan.h.
+    index: usize,
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_scan_begin(
-    _rel: Relation,
-    _snapshot: Snapshot,
-    _nkeys: std::ffi::c_int,
-    _key: *mut ScanKeyData,
-    _pscan: ParallelTableScanDesc,
-    _flags: uint32,
+    rel: Relation,
+    snapshot: Snapshot,
+    nkeys: std::ffi::c_int,
+    key: *mut ScanKeyData,
+    pscan: ParallelTableScanDesc,
+    flags: uint32,
 ) -> TableScanDesc {
     info!("pg_elephantduck_scan_begin is called");
-    unimplemented!()
+    let scan = Box::new(ElepanDuckScan {
+        rs_base: TableScanDescData {
+            rs_rd: rel,
+            rs_snapshot: snapshot,
+            rs_nkeys: nkeys,
+            rs_key: key,
+            rs_flags: flags,
+            rs_parallel: pscan,
+            rs_maxtid: ItemPointerData { ..Default::default() },
+            rs_mintid: ItemPointerData { ..Default::default() },
+        },
+        index: 0,
+    });
+    Box::into_raw(scan) as TableScanDesc
 }
 
 #[pg_guard]
-unsafe extern "C" fn pg_elephantduck_scan_end(_scan: TableScanDesc) {
+unsafe extern "C" fn pg_elephantduck_scan_end(scan: TableScanDesc) {
     info!("pg_elephantduck_scan_end is called");
-    unimplemented!()
+    if !scan.is_null() {
+        let _ = Box::from_raw(scan as *mut ElepanDuckScan);
+    }
 }
 
 #[pg_guard]
@@ -109,12 +138,38 @@ unsafe extern "C" fn pg_elephantduck_scan_rescan(
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
-    _scan: TableScanDesc,
+    scan: TableScanDesc,
     _direction: ScanDirection::Type,
-    _slot: *mut TupleTableSlot,
+    slot: *mut TupleTableSlot,
 ) -> bool {
     info!("pg_elephantduck_scan_getnextslot is called");
-    unimplemented!()
+
+    let elephant_duck_scan = scan as *mut ElepanDuckScan;
+
+    let rel = (*elephant_duck_scan).rs_base.rs_rd;
+    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
+    let _namespace = (*(*rel).rd_rel).relnamespace.as_u32();
+
+    let tables = VIRTUAL_TABLE.lock().unwrap();
+    let table = tables.get(name).unwrap();
+
+    ExecClearTuple(slot);
+
+    if (*elephant_duck_scan).index >= table[0].len() {
+        return false;
+    }
+
+    (*slot).tts_nvalid = table.len() as i16;
+    let values = std::slice::from_raw_parts_mut((*slot).tts_values, (*slot).tts_nvalid as usize);
+    let isnull = std::slice::from_raw_parts_mut((*slot).tts_isnull, (*slot).tts_nvalid as usize);
+    for i in 0..table.len() {
+        values[i] = Int32GetDatum(table[i][(*elephant_duck_scan).index]);
+        isnull[i] = false;
+    }
+
+    ExecStoreVirtualTuple(slot);
+    (*elephant_duck_scan).index += 1;
+    true
 }
 
 #[pg_guard]
@@ -230,14 +285,35 @@ unsafe extern "C" fn pg_elephantduck_index_delete_tuples(
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_tuple_insert(
-    _rel: Relation,
-    _slot: *mut TupleTableSlot,
+    rel: Relation,
+    slot: *mut TupleTableSlot,
     _cid: CommandId,
     _options: std::ffi::c_int,
     _bistate: *mut BulkInsertStateData,
 ) {
     info!("pg_elephantduck_tuple_insert is called");
-    unimplemented!()
+
+    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
+    let _namespace = &(*(*rel).rd_rel).relnamespace.as_u32();
+
+    let mut tables = VIRTUAL_TABLE.lock().unwrap();
+
+    let table = tables.get_mut(name).unwrap();
+
+    let nvalid = (*slot).tts_nvalid as usize;
+    let values = std::slice::from_raw_parts((*slot).tts_values, nvalid);
+    let isnull = std::slice::from_raw_parts((*slot).tts_isnull, nvalid);
+
+    for i in 0..nvalid {
+        let value = i32::from_datum(values[i], false).map_or(0, |d| d);
+        let isnull = isnull[i];
+
+        if isnull {
+            continue;
+        }
+
+        table[i].push(value);
+    }
 }
 
 #[pg_guard]
@@ -336,14 +412,37 @@ unsafe extern "C" fn pg_elephantduck_finish_bulk_insert(_rel: Relation, _options
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
-    _rel: Relation,
+    rel: Relation,
     _newrlocator: *const RelFileLocator,
     _persistence: std::ffi::c_char,
     _freeze_xid: *mut TransactionId,
     _minmulti: *mut MultiXactId,
 ) {
     info!("pg_elephantduck_relation_set_new_filelocator is called");
-    unimplemented!()
+
+    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
+    let namespace = &(*(*rel).rd_rel).relnamespace.as_u32();
+
+    let tuple_desc = (*rel).rd_att;
+    let natts = (*tuple_desc).natts as usize;
+    let attrs = (*tuple_desc).attrs.as_slice(natts);
+
+    for attr in attrs.iter().take(natts) {
+        if attr.is_dropped() {
+            continue;
+        }
+
+        let att_name = attr.name();
+        let att_type_oid = attr.type_oid();
+        let att_num = attr.num();
+
+        info!("name: {}, type: {:?}, num: {}", att_name, att_type_oid, att_num);
+    }
+
+    let mut table = VIRTUAL_TABLE.lock().unwrap();
+    table.insert(name.to_string(), vec![vec![]; natts]);
+
+    info!("namespace: {}, name: {}", namespace, name);
 }
 
 #[pg_guard]
@@ -447,8 +546,8 @@ unsafe extern "C" fn pg_elephantduck_relation_size(_rel: Relation, _for_k_number
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_needs_toast_table(_rel: Relation) -> bool {
-    info!("pg_elephantduck_relation_needs_toast_table is called");
-    unimplemented!()
+    // info!("pg_elephantduck_relation_needs_toast_table is called");
+    false // No need to create a toast table.
 }
 
 #[pg_guard]
@@ -479,7 +578,7 @@ unsafe extern "C" fn pg_elephantduck_relation_estimate_size(
     _allvisfrac: *mut f64,
 ) {
     info!("pg_elephantduck_relation_estimate_size is called");
-    unimplemented!()
+    // TODO Implement this function.
 }
 
 #[pg_guard]
@@ -531,3 +630,80 @@ extension_sql!(
     "#,
     name = "create_elephantduck_access_method",
 );
+
+#[cfg(test)]
+pub mod pg_test {
+    pub fn setup(_options: Vec<&str>) {}
+
+    pub fn postgresql_conf_options() -> Vec<&'static str> {
+        vec![]
+    }
+}
+
+#[pg_schema]
+#[cfg(any(test, feature = "pg_test"))]
+pub mod tests {
+    use pgrx::prelude::*;
+
+    fn pg_test_setup() {
+        let _ = Spi::run(
+            "
+        DROP EXTENSION IF EXISTS pg_elephantduck;
+        CREATE EXTENSION pg_elephantduck;
+        ",
+        );
+    }
+
+    #[pg_test]
+    fn test_success_absolutely() {
+        pg_test_setup();
+
+        let result = Spi::get_one::<i32>("SELECT 1;");
+        assert_eq!(result, Ok(Some(1)));
+    }
+
+    #[pg_test]
+    fn test_create_table() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test (num INT) USING elephantduck;
+        ",
+        );
+    }
+
+    #[pg_test]
+    fn test_insert_one() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test (num INT) USING elephantduck;
+        ",
+        );
+        let _ = Spi::run("INSERT INTO test VALUES (3);");
+        let result = Spi::get_one::<i32>("SELECT num FROM test;");
+        assert_eq!(result, Ok(Some(3)));
+    }
+
+    #[pg_test]
+    fn test_insert_two() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test (num INT) USING elephantduck;
+        ",
+        );
+        let _ = Spi::run("INSERT INTO test VALUES (1), (2);");
+        let result_one = Spi::get_one::<i32>("SELECT COUNT(*)::INT FROM test;");
+        assert_eq!(result_one, Ok(Some(2)));
+
+        let result_two = Spi::get_one::<i32>("SELECT MAX(num) FROM test;");
+        assert_eq!(result_two, Ok(Some(2)));
+    }
+}

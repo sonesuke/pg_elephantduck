@@ -8,5 +8,4 @@ services:
     working_dir: /usr/src/myapp
     tty: true
     command: bash
-    environment:
-      - RUST_LOG=debug
+    
