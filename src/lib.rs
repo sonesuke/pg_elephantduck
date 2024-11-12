@@ -710,7 +710,10 @@ pub mod tests {
         CREATE TABLE test USING elephantduck AS SELECT GENERATE_SERIES(1, 10) AS num;
         ",
         );
-        let result_one = Spi::get_one::<i32>("SELECT num FROM test;");
-        assert_eq!(result_one, Ok(Some(1)));
+        let count = Spi::get_one::<i64>("SELECT COUNT(*)::INT8 FROM test;");
+        assert_eq!(count, Ok(Some(10)), "Should generate 10 rows");
+
+        let min_max = Spi::get_two::<i32, i32>("SELECT MIN(num), MAX(num) FROM test;");
+        assert_eq!(min_max, Ok(Some((1, 10))), "Should contain values from 1 to 10");
     }
 }
