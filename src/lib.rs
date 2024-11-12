@@ -407,7 +407,7 @@ unsafe extern "C" fn pg_elephantduck_tuple_lock(
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_finish_bulk_insert(_rel: Relation, _options: std::ffi::c_int) {
     info!("pg_elephantduck_finish_bulk_insert is called");
-    unimplemented!()
+    // not needed
 }
 
 #[pg_guard]
@@ -654,6 +654,15 @@ pub mod tests {
         );
     }
 
+    fn create_test_table() {
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test (num INT) USING elephantduck;
+        ",
+        );
+    }
+
     #[pg_test]
     fn test_success_absolutely() {
         pg_test_setup();
@@ -665,25 +674,14 @@ pub mod tests {
     #[pg_test]
     fn test_create_table() {
         pg_test_setup();
-
-        let _ = Spi::run(
-            "
-        DROP TABLE IF EXISTS test;
-        CREATE TABLE test (num INT) USING elephantduck;
-        ",
-        );
+        create_test_table();
     }
 
     #[pg_test]
     fn test_insert_one() {
         pg_test_setup();
+        create_test_table();
 
-        let _ = Spi::run(
-            "
-        DROP TABLE IF EXISTS test;
-        CREATE TABLE test (num INT) USING elephantduck;
-        ",
-        );
         let _ = Spi::run("INSERT INTO test VALUES (3);");
         let result = Spi::get_one::<i32>("SELECT num FROM test;");
         assert_eq!(result, Ok(Some(3)));
@@ -692,18 +690,27 @@ pub mod tests {
     #[pg_test]
     fn test_insert_two() {
         pg_test_setup();
+        create_test_table();
 
-        let _ = Spi::run(
-            "
-        DROP TABLE IF EXISTS test;
-        CREATE TABLE test (num INT) USING elephantduck;
-        ",
-        );
         let _ = Spi::run("INSERT INTO test VALUES (1), (2);");
         let result_one = Spi::get_one::<i32>("SELECT COUNT(*)::INT FROM test;");
         assert_eq!(result_one, Ok(Some(2)));
 
         let result_two = Spi::get_one::<i32>("SELECT MAX(num) FROM test;");
         assert_eq!(result_two, Ok(Some(2)));
+    }
+
+    #[pg_test]
+    fn test_create_table_as() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test USING elephantduck AS SELECT GENERATE_SERIES(1, 10) AS num;
+        ",
+        );
+        let result_one = Spi::get_one::<i32>("SELECT num FROM test;");
+        assert_eq!(result_one, Ok(Some(1)));
     }
 }
