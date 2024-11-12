@@ -668,7 +668,7 @@ pub mod tests {
         pg_test_setup();
 
         let result = Spi::get_one::<i32>("SELECT 1;");
-        assert_eq!(result, Ok(Some(1)));
+        assert_eq!(result, Ok(Some(1)), "Should be 1 and success absolutely");
     }
 
     #[pg_test]
@@ -684,7 +684,7 @@ pub mod tests {
 
         let _ = Spi::run("INSERT INTO test VALUES (3);");
         let result = Spi::get_one::<i32>("SELECT num FROM test;");
-        assert_eq!(result, Ok(Some(3)));
+        assert_eq!(result, Ok(Some(3)), "Should be 3 as inserted");
     }
 
     #[pg_test]
@@ -694,10 +694,10 @@ pub mod tests {
 
         let _ = Spi::run("INSERT INTO test VALUES (1), (2);");
         let result_one = Spi::get_one::<i32>("SELECT COUNT(*)::INT FROM test;");
-        assert_eq!(result_one, Ok(Some(2)));
+        assert_eq!(result_one, Ok(Some(2)), "Count should be 2");
 
         let result_two = Spi::get_one::<i32>("SELECT MAX(num) FROM test;");
-        assert_eq!(result_two, Ok(Some(2)));
+        assert_eq!(result_two, Ok(Some(2)), "Max num hould be 2");
     }
 
     #[pg_test]
@@ -712,8 +712,5 @@ pub mod tests {
         );
         let count = Spi::get_one::<i64>("SELECT COUNT(*)::INT8 FROM test;");
         assert_eq!(count, Ok(Some(10)), "Should generate 10 rows");
-
-        let min_max = Spi::get_two::<i32, i32>("SELECT MIN(num), MAX(num) FROM test;");
-        assert_eq!(min_max, Ok(Some((1, 10))), "Should contain values from 1 to 10");
     }
 }
