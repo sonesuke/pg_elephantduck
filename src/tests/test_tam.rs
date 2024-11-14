@@ -9,7 +9,7 @@ pub mod tests {
     use super::*;
 
     fn pg_test_setup() {
-        let _ = Spi::run(
+        Spi::run(
             "
         DROP EXTENSION IF EXISTS pg_elephantduck;
         CREATE EXTENSION pg_elephantduck;
@@ -18,7 +18,7 @@ pub mod tests {
     }
 
     fn create_test_table() {
-        let _ = Spi::run(
+        Spi::run(
             "
         DROP TABLE IF EXISTS test;
         CREATE TABLE test (num INT) USING elephantduck;
@@ -45,7 +45,7 @@ pub mod tests {
         pg_test_setup();
         create_test_table();
 
-        let _ = Spi::run("INSERT INTO test VALUES (3);");
+        Spi::run("INSERT INTO test VALUES (3);");
         let result = Spi::get_one::<i32>("SELECT num FROM test;");
         assert_eq!(result, Ok(Some(3)), "Should be 3 as inserted");
     }
@@ -55,7 +55,7 @@ pub mod tests {
         pg_test_setup();
         create_test_table();
 
-        let _ = Spi::run("INSERT INTO test VALUES (1), (2);");
+        Spi::run("INSERT INTO test VALUES (1), (2);");
         let result_one = Spi::get_one::<i32>("SELECT COUNT(*)::INT FROM test;");
         assert_eq!(result_one, Ok(Some(2)), "Count should be 2");
 
@@ -67,7 +67,7 @@ pub mod tests {
     fn test_create_table_as() {
         pg_test_setup();
 
-        let _ = Spi::run(
+        Spi::run(
             "
         DROP TABLE IF EXISTS test;
         CREATE TABLE test USING elephantduck AS SELECT GENERATE_SERIES(1, 10) AS num;

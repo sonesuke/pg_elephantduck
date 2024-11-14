@@ -79,7 +79,7 @@ unsafe extern "C" fn pg_elephantduck_slot_callbacks(_rel: Relation) -> *const Tu
 }
 
 #[allow(dead_code)]
-pub struct ElepanDuckScan {
+pub struct ElepantDuckScan {
     rs_base: TableScanDescData, // Base class from access/relscan.h.
     index: usize,
 }
@@ -94,7 +94,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     flags: uint32,
 ) -> TableScanDesc {
     info!("pg_elephantduck_scan_begin is called");
-    let scan = Box::new(ElepanDuckScan {
+    let scan = Box::new(ElepantDuckScan {
         rs_base: TableScanDescData {
             rs_rd: rel,
             rs_snapshot: snapshot,
@@ -114,7 +114,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
 unsafe extern "C" fn pg_elephantduck_scan_end(scan: TableScanDesc) {
     info!("pg_elephantduck_scan_end is called");
     if !scan.is_null() {
-        let _ = Box::from_raw(scan as *mut ElepanDuckScan);
+        let _ = Box::from_raw(scan as *mut ElepantDuckScan);
     }
 }
 
@@ -139,7 +139,7 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
 ) -> bool {
     info!("pg_elephantduck_scan_getnextslot is called");
 
-    let elephant_duck_scan = scan as *mut ElepanDuckScan;
+    let elephant_duck_scan = scan as *mut ElepantDuckScan;
 
     let rel = (*elephant_duck_scan).rs_base.rs_rd;
     let name = name_data_to_str(&(*(*rel).rd_rel).relname);
@@ -297,6 +297,7 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
         Some(table) => table,
         None => {
             // Handle the error, e.g., return or log an error
+            // This will be removed in the future.
             return;
         }
     };
