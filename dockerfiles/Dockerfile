@@ -20,12 +20,10 @@ RUN apt-get update && apt-get install -y \
 # Switch to the non-root user 
 RUN useradd -m rustuser
 USER rustuser
+ENV USER=rustuser
 
 # Install cargo-pgrx and initialize it
-RUN cargo install cargo-pgrx && cargo pgrx init --jobs 4
+RUN cargo install cargo-pgrx && cargo pgrx init --jobs 4 --pg16 download
 
 # setup dev tools
 RUN rustup component add rustfmt clippy
-
-# Set USER environment variable
-ENV USER=rustuser
