@@ -293,7 +293,13 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
 
     let mut tables = VIRTUAL_TABLE.lock().unwrap();
 
-    let table = tables.get_mut(name).unwrap();
+    let table = match tables.get_mut(name) {
+        Some(table) => table,
+        None => {
+            // Handle the error, e.g., return or log an error
+            return;
+        }
+    };
 
     let nvalid = (*slot).tts_nvalid as usize;
     let values = std::slice::from_raw_parts((*slot).tts_values, nvalid);
