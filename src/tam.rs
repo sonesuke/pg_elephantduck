@@ -1,74 +1,94 @@
 // table_ access method (TM) interface
 
-use std::collections::HashMap;
-use std::vec;
-
 use pgrx::info;
 use pgrx::pg_sys::*;
 
 #[allow(unused_imports)]
 use pgrx::prelude::*;
 
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+use std::collections::HashMap;
+use std::vec;
+
+static mut VIRTUAL_TABLE: std::sync::LazyLock<std::sync::Mutex<HashMap<std::string::String, Vec<Vec<i32>>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+struct PgElephantduckAmRoutine {
+    routines: TableAmRoutine,
+}
+
+impl PgElephantduckAmRoutine {
+    fn new() -> Self {
+        PgElephantduckAmRoutine {
+            routines: TableAmRoutine {
+                type_: NodeTag::T_TableAmRoutine,
+
+                slot_callbacks: Some(pg_elephantduck_slot_callbacks),
+                scan_begin: Some(pg_elephantduck_scan_begin),
+                scan_end: Some(pg_elephantduck_scan_end),
+                scan_rescan: Some(pg_elephantduck_scan_rescan),
+                scan_getnextslot: Some(pg_elephantduck_scan_getnextslot),
+                scan_set_tidrange: Some(pg_elephantduck_scan_set_tidrange),
+                scan_getnextslot_tidrange: Some(pg_elephantduck_scan_getnextslot_tidrange),
+                parallelscan_estimate: Some(pg_elephantduck_parallelscan_estimate),
+                parallelscan_initialize: Some(pg_elephantduck_parallelscan_initialize),
+                parallelscan_reinitialize: Some(pg_elephantduck_parallelscan_reinitialize),
+                index_fetch_begin: Some(pg_elephantduck_index_fetch_begin),
+                index_fetch_reset: Some(pg_elephantduck_index_fetch_reset),
+                index_fetch_end: Some(pg_elephantduck_index_fetch_end),
+                index_fetch_tuple: Some(pg_elephantduck_index_fetch_tuple),
+                tuple_fetch_row_version: Some(pg_elephantduck_tuple_fetch_row_version),
+                tuple_tid_valid: Some(pg_elephantduck_tuple_tid_valid),
+                tuple_get_latest_tid: Some(pg_elephantduck_tuple_get_latest_tid),
+                tuple_satisfies_snapshot: Some(pg_elephantduck_tuple_satisfies_snapshot),
+                index_delete_tuples: Some(pg_elephantduck_index_delete_tuples),
+                tuple_insert: Some(pg_elephantduck_tuple_insert),
+                tuple_insert_speculative: Some(pg_elephantduck_tuple_insert_speculative),
+                tuple_complete_speculative: Some(pg_elephantduck_tuple_complete_speculative),
+                multi_insert: Some(pg_elephantduck_multi_insert),
+                tuple_delete: Some(pg_elephantduck_tuple_delete),
+                tuple_update: Some(pg_elephantduck_tuple_update),
+                tuple_lock: Some(pg_elephantduck_tuple_lock),
+                finish_bulk_insert: Some(pg_elephantduck_finish_bulk_insert),
+                relation_set_new_filelocator: Some(pg_elephantduck_relation_set_new_filelocator),
+                relation_nontransactional_truncate: Some(pg_elephantduck_relation_nontransactional_truncate),
+                relation_copy_data: Some(pg_elephantduck_relation_copy_data),
+                relation_copy_for_cluster: Some(pg_elephantduck_relation_copy_for_cluster),
+                relation_vacuum: Some(pg_elephantduck_relation_vacuum),
+                scan_analyze_next_block: Some(pg_elephantduck_scan_analyze_next_block),
+                scan_analyze_next_tuple: Some(pg_elephantduck_scan_analyze_next_tuple),
+                index_build_range_scan: Some(pg_elephantduck_index_build_range_scan),
+                index_validate_scan: Some(pg_elephantduck_index_validate_scan),
+                relation_size: Some(pg_elephantduck_relation_size),
+                relation_needs_toast_table: Some(pg_elephantduck_relation_needs_toast_table),
+                relation_toast_am: Some(pg_elephantduck_relation_toast_am),
+                relation_fetch_toast_slice: Some(pg_elephantduck_relation_fetch_toast_slice),
+                relation_estimate_size: Some(pg_elephantduck_relation_estimate_size),
+                scan_bitmap_next_block: Some(pg_elephantduck_scan_bitmap_next_block),
+                scan_bitmap_next_tuple: Some(pg_elephantduck_scan_bitmap_next_tuple),
+                scan_sample_next_block: Some(pg_elephantduck_scan_sample_next_block),
+                scan_sample_next_tuple: Some(pg_elephantduck_scan_sample_next_tuple),
+            },
+        }
+    }
+
+    fn get_routines(&self) -> *mut TableAmRoutine {
+        &self.routines as *const _ as *mut _
+    }
+}
+
+static mut ELEPHANTDUCK_AM_ROUTINE: Lazy<Mutex<PgElephantduckAmRoutine>> =
+    Lazy::new(|| Mutex::new(PgElephantduckAmRoutine::new()));
+
 // The handler function for the access method.
 // This function is called when the access method is created.
 #[pg_guard]
 #[no_mangle]
 pub extern "C" fn pg_elephantduck_handler(_fcinfo: FunctionCallInfo) -> *mut TableAmRoutine {
-    let table_am_routine = Box::new(TableAmRoutine {
-        type_: NodeTag::T_TableAmRoutine,
-
-        slot_callbacks: Some(pg_elephantduck_slot_callbacks),
-        scan_begin: Some(pg_elephantduck_scan_begin),
-        scan_end: Some(pg_elephantduck_scan_end),
-        scan_rescan: Some(pg_elephantduck_scan_rescan),
-        scan_getnextslot: Some(pg_elephantduck_scan_getnextslot),
-        scan_set_tidrange: Some(pg_elephantduck_scan_set_tidrange),
-        scan_getnextslot_tidrange: Some(pg_elephantduck_scan_getnextslot_tidrange),
-        parallelscan_estimate: Some(pg_elephantduck_parallelscan_estimate),
-        parallelscan_initialize: Some(pg_elephantduck_parallelscan_initialize),
-        parallelscan_reinitialize: Some(pg_elephantduck_parallelscan_reinitialize),
-        index_fetch_begin: Some(pg_elephantduck_index_fetch_begin),
-        index_fetch_reset: Some(pg_elephantduck_index_fetch_reset),
-        index_fetch_end: Some(pg_elephantduck_index_fetch_end),
-        index_fetch_tuple: Some(pg_elephantduck_index_fetch_tuple),
-        tuple_fetch_row_version: Some(pg_elephantduck_tuple_fetch_row_version),
-        tuple_tid_valid: Some(pg_elephantduck_tuple_tid_valid),
-        tuple_get_latest_tid: Some(pg_elephantduck_tuple_get_latest_tid),
-        tuple_satisfies_snapshot: Some(pg_elephantduck_tuple_satisfies_snapshot),
-        index_delete_tuples: Some(pg_elephantduck_index_delete_tuples),
-        tuple_insert: Some(pg_elephantduck_tuple_insert),
-        tuple_insert_speculative: Some(pg_elephantduck_tuple_insert_speculative),
-        tuple_complete_speculative: Some(pg_elephantduck_tuple_complete_speculative),
-        multi_insert: Some(pg_elephantduck_multi_insert),
-        tuple_delete: Some(pg_elephantduck_tuple_delete),
-        tuple_update: Some(pg_elephantduck_tuple_update),
-        tuple_lock: Some(pg_elephantduck_tuple_lock),
-        finish_bulk_insert: Some(pg_elephantduck_finish_bulk_insert),
-        relation_set_new_filelocator: Some(pg_elephantduck_relation_set_new_filelocator),
-        relation_nontransactional_truncate: Some(pg_elephantduck_relation_nontransactional_truncate),
-        relation_copy_data: Some(pg_elephantduck_relation_copy_data),
-        relation_copy_for_cluster: Some(pg_elephantduck_relation_copy_for_cluster),
-        relation_vacuum: Some(pg_elephantduck_relation_vacuum),
-        scan_analyze_next_block: Some(pg_elephantduck_scan_analyze_next_block),
-        scan_analyze_next_tuple: Some(pg_elephantduck_scan_analyze_next_tuple),
-        index_build_range_scan: Some(pg_elephantduck_index_build_range_scan),
-        index_validate_scan: Some(pg_elephantduck_index_validate_scan),
-        relation_size: Some(pg_elephantduck_relation_size),
-        relation_needs_toast_table: Some(pg_elephantduck_relation_needs_toast_table),
-        relation_toast_am: Some(pg_elephantduck_relation_toast_am),
-        relation_fetch_toast_slice: Some(pg_elephantduck_relation_fetch_toast_slice),
-        relation_estimate_size: Some(pg_elephantduck_relation_estimate_size),
-        scan_bitmap_next_block: Some(pg_elephantduck_scan_bitmap_next_block),
-        scan_bitmap_next_tuple: Some(pg_elephantduck_scan_bitmap_next_tuple),
-        scan_sample_next_block: Some(pg_elephantduck_scan_sample_next_block),
-        scan_sample_next_tuple: Some(pg_elephantduck_scan_sample_next_tuple),
-    });
-
-    Box::into_raw(table_am_routine)
+    unsafe { ELEPHANTDUCK_AM_ROUTINE.lock().unwrap().get_routines() }
 }
-
-static mut VIRTUAL_TABLE: std::sync::LazyLock<std::sync::Mutex<HashMap<std::string::String, Vec<Vec<i32>>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_slot_callbacks(_rel: Relation) -> *const TupleTableSlotOps {
@@ -79,7 +99,7 @@ unsafe extern "C" fn pg_elephantduck_slot_callbacks(_rel: Relation) -> *const Tu
 }
 
 #[allow(dead_code)]
-pub struct ElepantDuckScan {
+pub struct ElephantDuckScan {
     rs_base: TableScanDescData, // Base class from access/relscan.h.
     index: usize,
 }
@@ -94,7 +114,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     flags: uint32,
 ) -> TableScanDesc {
     info!("pg_elephantduck_scan_begin is called");
-    let scan = Box::new(ElepantDuckScan {
+    let scan = Box::new(ElephantDuckScan {
         rs_base: TableScanDescData {
             rs_rd: rel,
             rs_snapshot: snapshot,
@@ -114,7 +134,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
 unsafe extern "C" fn pg_elephantduck_scan_end(scan: TableScanDesc) {
     info!("pg_elephantduck_scan_end is called");
     if !scan.is_null() {
-        let _ = Box::from_raw(scan as *mut ElepantDuckScan);
+        let _ = Box::from_raw(scan as *mut ElephantDuckScan);
     }
 }
 
@@ -139,7 +159,7 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
 ) -> bool {
     info!("pg_elephantduck_scan_getnextslot is called");
 
-    let elephant_duck_scan = scan as *mut ElepantDuckScan;
+    let elephant_duck_scan = scan as *mut ElephantDuckScan;
 
     let rel = (*elephant_duck_scan).rs_base.rs_rd;
     let name = name_data_to_str(&(*(*rel).rd_rel).relname);
@@ -619,4 +639,17 @@ unsafe extern "C" fn pg_elephantduck_scan_sample_next_tuple(
 ) -> bool {
     info!("pg_elephantduck_scan_sample_next_tuple is called");
     unimplemented!()
+}
+
+pub fn is_elephantduck_table(relid: Oid) -> bool {
+    if relid == InvalidOid {
+        return false;
+    }
+
+    unsafe {
+        let rel = RelationIdGetRelation(relid);
+        let result = (*rel).rd_tableam == ELEPHANTDUCK_AM_ROUTINE.lock().unwrap().get_routines();
+        RelationClose(rel);
+        result
+    }
 }
