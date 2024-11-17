@@ -9,11 +9,7 @@ use pgrx::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-use std::collections::HashMap;
-use std::vec;
-
-static mut VIRTUAL_TABLE: std::sync::LazyLock<std::sync::Mutex<HashMap<std::string::String, Vec<Vec<i32>>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+use crate::storage::*;
 
 struct PgElephantduckAmRoutine {
     routines: TableAmRoutine,
@@ -159,32 +155,25 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
 ) -> bool {
     info!("pg_elephantduck_scan_getnextslot is called");
 
-    let elephant_duck_scan = scan as *mut ElephantDuckScan;
-
-    let rel = (*elephant_duck_scan).rs_base.rs_rd;
-    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
-    let _namespace = (*(*rel).rd_rel).relnamespace.as_u32();
-
-    let tables = VIRTUAL_TABLE.lock().unwrap();
-    let table = tables.get(name).unwrap();
-
     ExecClearTuple(slot);
 
-    if (*elephant_duck_scan).index >= table[0].len() {
-        return false;
-    }
+    let elephant_duck_scan = scan as *mut ElephantDuckScan;
+    let relid = (*(*elephant_duck_scan).rs_base.rs_rd).rd_id;
 
-    (*slot).tts_nvalid = table.len() as i16;
-    let values = std::slice::from_raw_parts_mut((*slot).tts_values, (*slot).tts_nvalid as usize);
-    let isnull = std::slice::from_raw_parts_mut((*slot).tts_isnull, (*slot).tts_nvalid as usize);
-    for i in 0..table.len() {
-        values[i] = Int32GetDatum(table[i][(*elephant_duck_scan).index]);
-        isnull[i] = false;
+    match get_row(relid.into(), (*elephant_duck_scan).index) {
+        Some(row) => {
+            let values = std::slice::from_raw_parts_mut((*slot).tts_values, row.len());
+            let isnull = std::slice::from_raw_parts_mut((*slot).tts_isnull, row.len());
+            for i in 0..row.len() {
+                values[i] = Int32GetDatum(row[i].value);
+                isnull[i] = row[i].is_null;
+            }
+            ExecStoreVirtualTuple(slot);
+            (*elephant_duck_scan).index += 1;
+            true
+        }
+        None => false,
     }
-
-    ExecStoreVirtualTuple(slot);
-    (*elephant_duck_scan).index += 1;
-    true
 }
 
 #[pg_guard]
@@ -308,34 +297,20 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
 ) {
     info!("pg_elephantduck_tuple_insert is called");
 
-    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
-    let _namespace = &(*(*rel).rd_rel).relnamespace.as_u32();
-
-    let mut tables = VIRTUAL_TABLE.lock().unwrap();
-
-    let table = match tables.get_mut(name) {
-        Some(table) => table,
-        None => {
-            // Handle the error, e.g., return or log an error
-            // This will be removed in the future.
-            return;
-        }
-    };
-
+    let relid = (*rel).rd_id;
     let nvalid = (*slot).tts_nvalid as usize;
     let values = std::slice::from_raw_parts((*slot).tts_values, nvalid);
     let isnull = std::slice::from_raw_parts((*slot).tts_isnull, nvalid);
 
-    for i in 0..nvalid {
-        let value = i32::from_datum(values[i], false).map_or(0, |d| d);
-        let isnull = isnull[i];
-
-        if isnull {
-            continue;
-        }
-
-        table[i].push(value);
-    }
+    let row = values
+        .iter()
+        .zip(isnull.iter())
+        .map(|(v, i)| Value {
+            value: i32::from_datum(*v, false).map_or(0, |d| d),
+            is_null: *i,
+        })
+        .collect();
+    insert_table(relid.into(), row);
 }
 
 #[pg_guard]
@@ -443,28 +418,21 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
     info!("pg_elephantduck_relation_set_new_filelocator is called");
 
     let name = name_data_to_str(&(*(*rel).rd_rel).relname);
-    let namespace = &(*(*rel).rd_rel).relnamespace.as_u32();
+    let relid = (*rel).rd_id;
 
     let tuple_desc = (*rel).rd_att;
     let natts = (*tuple_desc).natts as usize;
     let attrs = (*tuple_desc).attrs.as_slice(natts);
-
-    for attr in attrs.iter().take(natts) {
-        if attr.is_dropped() {
-            continue;
-        }
-
-        let att_name = attr.name();
-        let att_type_oid = attr.type_oid();
-        let att_num = attr.num();
-
-        info!("name: {}, type: {:?}, num: {}", att_name, att_type_oid, att_num);
-    }
-
-    let mut table = VIRTUAL_TABLE.lock().unwrap();
-    table.insert(name.to_string(), vec![vec![]; natts]);
-
-    info!("namespace: {}, name: {}", namespace, name);
+    let attrs = attrs
+        .iter()
+        .filter(|attr| !attr.is_dropped())
+        .map(|a| Attribute {
+            column_id: a.attnum as u32,
+            data_type: u32::from(a.atttypid),
+        })
+        .collect();
+    create_table(relid.into(), attrs);
+    info!("name: {}", name);
 }
 
 #[pg_guard]

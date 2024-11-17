@@ -11,7 +11,7 @@ pub mod tests {
     fn pg_test_setup() {
         let _ = Spi::run(
             "
-        DROP EXTENSION IF EXISTS pg_elephantduck;
+        DROP EXTENSION IF EXISTS pg_elephantduck CASCADE;
         CREATE EXTENSION pg_elephantduck;
         ",
         );
