@@ -1,5 +1,8 @@
 use pgrx::prelude::*;
 
+mod custom_scan;
+use custom_scan::{finish_custom_scan, init_custom_scan};
+
 mod tam;
 mod tests;
 
@@ -10,6 +13,16 @@ pgrx::pg_module_magic!();
 pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_record {
     static V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
     &V1
+}
+
+#[pg_guard]
+pub extern "C" fn _PG_init() {
+    init_custom_scan();
+}
+
+#[pg_guard]
+pub extern "C" fn _PG_fini() {
+    finish_custom_scan();
 }
 
 // Register the extention as an access method.
