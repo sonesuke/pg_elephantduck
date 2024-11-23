@@ -251,7 +251,7 @@ pub fn init_custom_scan() {
         pg_sys::RegisterCustomScanMethods(ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods());
 
         PREV_SET_REL_PATHLIST_HOOK = pg_sys::set_rel_pathlist_hook;
-        pg_sys::set_rel_pathlist_hook = Some(pg_elephantduck_set_rel_pathlist);
+        // pg_sys::set_rel_pathlist_hook = Some(pg_elephantduck_set_rel_pathlist);
     }
 }
 
@@ -262,6 +262,6 @@ pub fn init_custom_scan() {
 pub fn finish_custom_scan() {
     unsafe {
         info!("elephantduck: finish custom scan");
-        pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
+        // pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
     }
 }

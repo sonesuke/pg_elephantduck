@@ -3,6 +3,7 @@ use pgrx::prelude::*;
 mod custom_scan;
 use custom_scan::{finish_custom_scan, init_custom_scan};
 
+mod storage;
 mod tam;
 mod tests;
 
