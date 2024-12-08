@@ -15,7 +15,7 @@ struct PgElephantduckScanState {
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut CustomScan) -> *mut Node {
     // Implement the creation of custom scan state
-    info!("elephantduck: create custom scan state");
+    debug1!("elephantduck: create custom scan state");
     let scan_state: *mut PgElephantduckScanState =
         palloc0(std::mem::size_of::<PgElephantduckScanState>()) as *mut PgElephantduckScanState;
     (*(scan_state as *mut Node)).type_ = NodeTag::T_CustomScanState;
@@ -27,25 +27,25 @@ unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut Custom
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_begin_custom_scan(_csstate: *mut CustomScanState, _estate: *mut EState, _eflags: i32) {
-    info!("elephantduck: begin custom scan");
+    debug1!("elephantduck: begin custom scan");
     unimplemented!()
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_exec_custom_scan(_csstate: *mut CustomScanState) -> *mut TupleTableSlot {
-    info!("elephantduck: exec custom scan");
+    debug1!("elephantduck: exec custom scan");
     unimplemented!()
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_end_custom_scan(_csstate: *mut CustomScanState) {
-    info!("elephantduck: end custom scan");
+    debug1!("elephantduck: end custom scan");
     unimplemented!()
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_rescan_custom_scan(_csstate: *mut CustomScanState) {
-    info!("elephantduck: rescan custom scan");
+    debug1!("elephantduck: rescan custom scan");
     // Nothing to do
 }
 
@@ -133,7 +133,7 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     clauses: *mut List,
     _custom_plans: *mut List,
 ) -> *mut Plan {
-    info!("elephantduck: plan custom path");
+    debug1!("elephantduck: plan custom path");
 
     let custom_scan: *mut CustomScan = palloc0(std::mem::size_of::<CustomScan>()) as *mut CustomScan;
     (*(custom_scan as *mut Node)).type_ = NodeTag::T_CustomScan;
@@ -195,7 +195,7 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
     rte: *mut RangeTblEntry,
 ) {
     unsafe {
-        info!("elephantduck: set rel pathlist");
+        debug1!("elephantduck: set rel pathlist");
 
         // Call the previous set_rel_pathlist hook for PostgreSQL manner
         if let Some(prev_hook) = PREV_SET_REL_PATHLIST_HOOK {
@@ -204,13 +204,13 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
 
         // Check if the relation is a base relation
         if (*rte).relid == InvalidOid || (*rte).rtekind != RTEKind::RTE_RELATION || (*rte).inh {
-            info!("elephantduck: return because of invalid rte");
+            debug1!("elephantduck: return because of invalid rte");
             return;
         }
 
         // Remove exists paths, set a custom path for elephantduck tables
         if is_elephantduck_table((*rte).relid) {
-            info!("elephantduck: set rel pathlist for elephantduck table");
+            debug1!("elephantduck: set rel pathlist for elephantduck table");
 
             // Remove exists paths
             (*rel).pathlist = std::ptr::null_mut();
@@ -247,7 +247,7 @@ static mut PREV_SET_REL_PATHLIST_HOOK: Option<
 /// It registers custom scan methods and sets a hook to set_rel_pathlist.
 pub fn init_custom_scan() {
     unsafe {
-        info!("elephantduck: init custom scan");
+        debug1!("elephantduck: init custom scan");
         pg_sys::RegisterCustomScanMethods(ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods());
 
         PREV_SET_REL_PATHLIST_HOOK = pg_sys::set_rel_pathlist_hook;
@@ -261,7 +261,7 @@ pub fn init_custom_scan() {
 /// It resets the hook to set_rel_pathlist.
 pub fn finish_custom_scan() {
     unsafe {
-        info!("elephantduck: finish custom scan");
+        debug1!("elephantduck: finish custom scan");
         // pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
     }
 }

@@ -5,6 +5,8 @@ use custom_scan::{finish_custom_scan, init_custom_scan};
 
 mod storage;
 mod tam;
+use tam::{finish_tam_hooks, init_tam_hooks};
+
 mod tests;
 
 pgrx::pg_module_magic!();
@@ -19,11 +21,13 @@ pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_
 #[pg_guard]
 pub extern "C" fn _PG_init() {
     init_custom_scan();
+    init_tam_hooks();
 }
 
 #[pg_guard]
 pub extern "C" fn _PG_fini() {
     finish_custom_scan();
+    finish_tam_hooks();
 }
 
 // Register the extention as an access method.
