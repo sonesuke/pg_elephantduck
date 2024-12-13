@@ -1,6 +1,9 @@
 use arrow::array::{Array, ArrayRef};
-use arrow::datatypes::{Field, Fields, Schema as ArrowSchema};
+use arrow::datatypes::{Field, Fields, Schema as ArrowSchema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 use parquet::file::properties::WriterProperties;
+
+use duckdb::{ArrowStream, Config, Connection, Statement};
 
 use pgrx::pg_sys::{self};
 use pgrx::prelude::*;
@@ -23,13 +26,80 @@ pub struct Value {
 
 pub type Row = Vec<Value>;
 
+struct DuckdbReader {
+    connection: Connection,
+    statement: &'static mut Statement<'static>,
+    arrow_stream: &'static mut ArrowStream<'static>,
+    record_batch: Option<RecordBatch>,
+    current_row: usize,
+}
+
+impl DuckdbReader {
+    pub fn new(sql: String, schema: SchemaRef) -> Self {
+        let config = Config::default().threads(16).unwrap();
+        let connection = Connection::open_in_memory_with_flags(config).unwrap();
+
+        let statement = unsafe {
+            let statement = Box::leak(Box::new(connection.prepare(&sql).unwrap()));
+            std::mem::transmute::<&mut Statement<'_>, &mut Statement<'static>>(statement)
+        };
+
+        let arrow_stream = unsafe {
+            let arrow_stream = Box::leak(Box::new(statement.stream_arrow([], schema).unwrap()));
+            std::mem::transmute::<&mut ArrowStream<'_>, &mut ArrowStream<'static>>(arrow_stream)
+        };
+
+        Self {
+            connection,
+            statement,
+            arrow_stream,
+            record_batch: None,
+            current_row: 0,
+        }
+    }
+
+    pub fn read(&mut self) -> Option<Row> {
+        match &mut self.record_batch {
+            Some(record_batch) => {
+                if self.current_row >= record_batch.num_rows() {
+                    self.record_batch = self.arrow_stream.next();
+                    self.current_row = 0;
+                }
+            }
+            None => {
+                self.record_batch = self.arrow_stream.next();
+                self.current_row = 0;
+            }
+        }
+
+        match &self.record_batch {
+            Some(record_batch) => {
+                let row = record_batch
+                    .columns()
+                    .iter()
+                    .map(|column| convert_datum_arrow_to_pg(column, self.current_row))
+                    .collect();
+                self.current_row += 1;
+                Some(row)
+            }
+            None => None,
+        }
+    }
+
+    pub fn close(&mut self) {
+        unsafe {
+            let _ = Box::from_raw(self.arrow_stream);
+            let _ = Box::from_raw(self.statement);
+        }
+    }
+}
+
 pub struct Table {
     table_id: u32,
     pg_types: Vec<pg_sys::Oid>,
     schema: Option<ArrowSchema>,
     writer: Option<parquet::arrow::arrow_writer::ArrowWriter<std::fs::File>>,
-    reader: Option<parquet::arrow::arrow_reader::ParquetRecordBatchReader>,
-    current_iter: Option<parquet::record::reader::RowIter<'static>>,
+    reader: Option<DuckdbReader>,
 }
 
 impl Table {
@@ -50,7 +120,6 @@ impl Table {
             schema: Some(ArrowSchema::new(fields)),
             writer: None,
             reader: None,
-            current_iter: None,
         }
     }
 
@@ -98,30 +167,22 @@ impl Table {
     pub fn read(&mut self) -> Option<Row> {
         if self.reader.is_none() {
             let file_path = format!("/Users/sonesuke/pg_elephantduck/table_{}.parquet", self.table_id);
-
-            let parquet_file = std::fs::File::open(file_path.clone()).unwrap();
             debug1!("file_path: {}", file_path);
-            self.reader =
-                Some(parquet::arrow::arrow_reader::ParquetRecordBatchReader::try_new(parquet_file, 1).unwrap());
+            self.reader = Some(DuckdbReader::new(
+                format!("SELECT * FROM parquet_scan('{}')", file_path),
+                Arc::new(self.schema.clone().unwrap()),
+            ));
         }
 
-        if let Some(reader) = &mut self.reader {
-            match reader.next()? {
-                Ok(arrow_row) => {
-                    let value_row = arrow_row
-                        .columns()
-                        .iter()
-                        .map(|column| {
-                            let column: Arc<dyn arrow::array::Array> = Arc::clone(column);
-                            convert_datum_arrow_to_pg(column)
-                        })
-                        .collect();
-                    Some(value_row)
-                }
-                Err(_) => None,
+        match &mut self.reader {
+            Some(reader) => {
+                info!("Reading");
+                reader.read()
             }
-        } else {
-            None
+            None => {
+                debug1!("Reader is None");
+                None
+            }
         }
     }
 
@@ -130,9 +191,12 @@ impl Table {
             writer.close().unwrap();
             debug1!("Writer closed");
         }
+        if let Some(mut reader) = self.reader.take() {
+            reader.close();
+            debug1!("Reader closed");
+        }
         self.writer = None;
         self.reader = None;
-        self.current_iter = None;
     }
 }
 
@@ -181,50 +245,48 @@ fn convert_datum_pg_to_arrow(
     }
 }
 
-fn convert_datum_arrow_to_pg(field: ArrayRef) -> Value {
+fn convert_datum_arrow_to_pg(field: &ArrayRef, current_row: usize) -> Value {
     match field.data_type() {
         arrow::datatypes::DataType::Boolean => {
             let array = field.as_any().downcast_ref::<arrow::array::BooleanArray>().unwrap();
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         arrow::datatypes::DataType::Int32 => {
             let array = field.as_any().downcast_ref::<arrow::array::Int32Array>().unwrap();
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         arrow::datatypes::DataType::Int64 => {
             let array = field.as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         arrow::datatypes::DataType::Float32 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float32Array>().unwrap();
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         arrow::datatypes::DataType::Float64 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float64Array>().unwrap();
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         arrow::datatypes::DataType::Utf8 => {
             let array = field.as_any().downcast_ref::<arrow::array::StringArray>().unwrap();
-            // let datum = CStringGetDatum(array.value(0).as_pg_cstr());
-            debug1!("{:?}", array.value(0));
             Value {
-                datum: array.value(0).into_datum().unwrap(),
-                is_null: array.is_null(0),
+                datum: array.value(current_row).into_datum().unwrap(),
+                is_null: array.is_null(current_row),
             }
         }
         _ => panic!("Invalid data type {:?}", field.data_type()),
