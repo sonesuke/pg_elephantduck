@@ -1,11 +1,32 @@
 services:
-  app:
+  development:
     build:
-      context: ./dockerfiles
       dockerfile: Dockerfile
+      target: development
     volumes:
       - .:/usr/src/myapp
     working_dir: /usr/src/myapp
     tty: true
     command: bash
+
+  primary:
+    build:
+      dockerfile: Dockerfile
+      target: database-base
+    volumes:
+      - ./db-settings/primary/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./db-settings/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./db-settings/primary/scripts:/docker-entrypoint-initdb.d
+    command: ["-c", "hba_file=/etc/postgresql/pg_hba.conf", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+      
+
+  standby:
+    build:
+      dockerfile: Dockerfile
+      target: database-base
+    volumes:
+      - ./db-settings/standby/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./db-settings/standby/scripts:/docker-entrypoint-initdb.d
+    command: ["-c", "config_file=/etc/postgresql/postgresql.conf"]
+    
     
