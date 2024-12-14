@@ -3,6 +3,9 @@ use pgrx::prelude::*;
 mod custom_scan;
 use custom_scan::{finish_custom_scan, init_custom_scan};
 
+mod settings;
+use settings::init_gucs;
+
 mod storage;
 mod tam;
 use tam::{finish_tam_hooks, init_tam_hooks};
@@ -22,6 +25,7 @@ pub extern "C" fn pg_finfo_pg_elephantduck_handler() -> *const pg_sys::Pg_finfo_
 pub extern "C" fn _PG_init() {
     init_custom_scan();
     init_tam_hooks();
+    init_gucs();
 }
 
 #[pg_guard]

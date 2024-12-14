@@ -11,6 +11,8 @@ use pgrx::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::settings::{get_elephantduck_path, get_elephantduck_threads};
+
 pub struct Attribute {
     pub column_id: u32,
     pub data_type: pg_sys::Oid,
@@ -35,7 +37,7 @@ struct DuckdbReader {
 
 impl DuckdbReader {
     pub fn new(sql: String, schema: SchemaRef) -> Self {
-        let config = Config::default().threads(16).unwrap();
+        let config = Config::default().threads(get_elephantduck_threads().into()).unwrap();
         let connection = Connection::open_in_memory_with_flags(config).unwrap();
 
         let statement = unsafe {
@@ -111,6 +113,11 @@ impl Table {
         }
     }
 
+    fn get_path(&self, table_id: u32) -> String {
+        let dir = get_elephantduck_path().unwrap().to_str().unwrap();
+        format!("{}table_{}.parquet", dir, table_id)
+    }
+
     pub fn set_schema(&mut self, schema: Schema) {
         let fields: Fields = schema
             .iter()
@@ -128,8 +135,7 @@ impl Table {
 
     pub fn write(&mut self, row: Row) {
         if self.writer.is_none() {
-            let file_path = format!("table_{}.parquet", self.table_id);
-
+            let file_path = self.get_path(self.table_id);
             let parquet_file = std::fs::File::create(file_path.clone()).unwrap();
             debug1!("file_path: {}", file_path);
 
@@ -169,7 +175,7 @@ impl Table {
 
     pub fn read(&mut self) -> Option<Row> {
         if self.reader.is_none() {
-            let file_path = format!("table_{}.parquet", self.table_id);
+            let file_path = self.get_path(self.table_id);
             self.reader = Some(DuckdbReader::new(
                 format!("SELECT * FROM parquet_scan('{}')", file_path),
                 Arc::new(self.schema.clone().unwrap()),
