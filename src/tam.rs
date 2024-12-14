@@ -77,6 +77,24 @@ impl PgElephantduckAmRoutine {
 static mut ELEPHANTDUCK_AM_ROUTINE: Lazy<Mutex<PgElephantduckAmRoutine>> =
     Lazy::new(|| Mutex::new(PgElephantduckAmRoutine::new()));
 
+fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
+    unsafe {
+        let tuple_desc = (*rel).rd_att;
+        let natts = (*tuple_desc).natts as usize;
+        let attrs = (*tuple_desc).attrs.as_slice(natts);
+        Box::new(
+            attrs
+                .iter()
+                .filter(|attr| !attr.is_dropped())
+                .map(|a| Attribute {
+                    column_id: a.attnum as u32,
+                    data_type: a.atttypid,
+                })
+                .collect(),
+        )
+    }
+}
+
 // The handler function for the access method.
 // This function is called when the access method is created.
 #[pg_guard]
@@ -108,6 +126,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     flags: uint32,
 ) -> TableScanDesc {
     debug1!("pg_elephantduck_scan_begin is called");
+    set_schema_for_read((*rel).rd_id.into(), get_schema_from_relation(rel));
     let scan = Box::new(ElephantDuckScan {
         rs_base: TableScanDescData {
             rs_rd: rel,
@@ -412,19 +431,7 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
 
     let name = name_data_to_str(&(*(*rel).rd_rel).relname);
     let relid = (*rel).rd_id;
-
-    let tuple_desc = (*rel).rd_att;
-    let natts = (*tuple_desc).natts as usize;
-    let attrs = (*tuple_desc).attrs.as_slice(natts);
-    let attrs = attrs
-        .iter()
-        .filter(|attr| !attr.is_dropped())
-        .map(|a| Attribute {
-            column_id: a.attnum as u32,
-            data_type: a.atttypid,
-        })
-        .collect();
-    create_table(relid.into(), attrs);
+    create_table(relid.into(), get_schema_from_relation(rel));
     debug1!("name: {}", name);
 }
 

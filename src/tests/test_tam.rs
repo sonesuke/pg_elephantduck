@@ -177,10 +177,10 @@ pub mod tests {
         ",
         );
 
-        let result_num = Spi::get_one::<Date>("SELECT date FROM test;");
+        let _ = Spi::get_one::<Date>("SELECT date FROM test;");
         // assert_eq!(result_num, Ok(Some(1)), "Count should be 1");
 
-        let result_float = Spi::get_one::<Timestamp>("SELECT timestamp FROM test;");
+        let _ = Spi::get_one::<Timestamp>("SELECT timestamp FROM test;");
         // assert_eq!(result_float, Ok(Some(1.0)), "Count should be 1.0");
     }
 }
