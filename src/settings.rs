@@ -24,8 +24,8 @@ impl ElephantduckGucSettings {
     pub fn init(&self) {
         GucRegistry::define_string_guc(
             "elephantduck.path",
-            "Path to store parquets by ElephantDuck.",
-            "Path to store parquets by ElephantDuck.",
+            "Specifies the directory where ElephantDuck will store parquet files.",
+            "Specifies the directory where ElephantDuck will store parquet files.",
             &self.path,
             GucContext::Userset,
             GucFlags::default(),
@@ -33,8 +33,8 @@ impl ElephantduckGucSettings {
 
         GucRegistry::define_int_guc(
             "elephantduck.threads",
-            "Number of threads to use for ElephantDuck.",
-            "Number of threads to use for ElephantDuck.",
+            "Specifies the number of threads to use for ElephantDuck operations.",
+            "Specifies the number of threads to use for ElephantDuck operations.",
             &self.threads,
             1,
             64,
