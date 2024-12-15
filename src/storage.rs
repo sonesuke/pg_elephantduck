@@ -20,13 +20,11 @@ pub struct Attribute {
 
 pub type Schema = Vec<Attribute>;
 
-#[derive(Clone)]
-pub struct Value {
-    pub datum: pg_sys::Datum,
-    pub is_null: bool,
+pub struct TupleSlot<'a> {
+    pub natts: usize,
+    pub datum: &'a mut [pg_sys::Datum],
+    pub nulls: &'a mut [bool],
 }
-
-pub type Row = Vec<Value>;
 
 struct DuckdbReader {
     statement: &'static mut Statement<'static>,
@@ -58,7 +56,7 @@ impl DuckdbReader {
         }
     }
 
-    pub fn read(&mut self) -> Option<Row> {
+    pub fn read(&mut self, row: &mut TupleSlot) -> bool {
         match &mut self.record_batch {
             Some(record_batch) => {
                 if self.current_row >= record_batch.num_rows() {
@@ -74,15 +72,14 @@ impl DuckdbReader {
 
         match &self.record_batch {
             Some(record_batch) => {
-                let row = record_batch
-                    .columns()
-                    .iter()
-                    .map(|column| convert_datum_arrow_to_pg(column, self.current_row))
-                    .collect();
+                for column_index in 0..row.natts {
+                    let field = record_batch.column(column_index);
+                    convert_datum_arrow_to_pg(field, column_index, self.current_row, row);
+                }
                 self.current_row += 1;
-                Some(row)
+                true
             }
-            None => None,
+            None => false,
         }
     }
 
@@ -133,12 +130,10 @@ impl Table {
         self.pg_types = Some(schema.iter().map(|attr| attr.data_type).collect());
     }
 
-    pub fn write(&mut self, row: Row) {
+    pub fn write(&mut self, row: TupleSlot) {
         if self.writer.is_none() {
             let file_path = self.get_path(self.table_id);
             let parquet_file = std::fs::File::create(file_path.clone()).unwrap();
-            debug1!("file_path: {}", file_path);
-
             let writer_properties = WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::ZSTD(
                     parquet::basic::ZstdLevel::try_new(3).unwrap(),
@@ -158,9 +153,8 @@ impl Table {
         if let Some(writer) = &mut self.writer {
             let record_batch = arrow::record_batch::RecordBatch::try_new(
                 Arc::new(self.schema.clone().unwrap()),
-                row.iter()
-                    .zip(self.pg_types.as_ref().unwrap().iter())
-                    .map(|(v, t)| convert_datum_pg_to_arrow(*t, v.datum, v.is_null))
+                (0..row.natts)
+                    .map(|i| convert_datum_pg_to_arrow(self.pg_types.as_ref().unwrap()[i], row.datum[i], row.nulls[i]))
                     .collect(),
             )
             .unwrap();
@@ -173,7 +167,7 @@ impl Table {
         }
     }
 
-    pub fn read(&mut self) -> Option<Row> {
+    pub fn read(&mut self, row: &mut TupleSlot) -> bool {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
             self.reader = Some(DuckdbReader::new(
@@ -183,22 +177,17 @@ impl Table {
         }
 
         match &mut self.reader {
-            Some(reader) => reader.read(),
-            None => {
-                debug1!("Reader is None");
-                None
-            }
+            Some(reader) => reader.read(row),
+            None => false,
         }
     }
 
     pub fn close(&mut self) {
         if let Some(writer) = self.writer.take() {
             writer.close().unwrap();
-            debug1!("Writer closed");
         }
         if let Some(mut reader) = self.reader.take() {
             reader.close();
-            debug1!("Reader closed");
         }
         self.writer = None;
         self.reader = None;
@@ -250,49 +239,37 @@ fn convert_datum_pg_to_arrow(
     }
 }
 
-fn convert_datum_arrow_to_pg(field: &ArrayRef, current_row: usize) -> Value {
+fn convert_datum_arrow_to_pg(field: &ArrayRef, column_index: usize, current_row: usize, row: &mut TupleSlot) {
     match field.data_type() {
         arrow::datatypes::DataType::Boolean => {
             let array = field.as_any().downcast_ref::<arrow::array::BooleanArray>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Int32 => {
             let array = field.as_any().downcast_ref::<arrow::array::Int32Array>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Int64 => {
             let array = field.as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Float32 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float32Array>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Float64 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float64Array>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Utf8 => {
             let array = field.as_any().downcast_ref::<arrow::array::StringArray>().unwrap();
-            Value {
-                datum: array.value(current_row).into_datum().unwrap(),
-                is_null: array.is_null(current_row),
-            }
+            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
         }
         _ => panic!("Invalid data type {:?}", field.data_type()),
     }
@@ -306,27 +283,21 @@ pub fn create_table(table_id: u32, schema: Box<Schema>) {
                 table.set_schema(*schema);
                 storage.insert(table_id, table);
             }
-            Err(_) => {
-                debug1!("Failed to lock storage")
-            }
+            Err(_) => {}
         }
     }
 }
 
-pub fn insert_table(table_id: u32, row: Row) {
+pub fn insert_table(table_id: u32, row: TupleSlot) {
     unsafe {
         match VIRTUAL_STORAGE.lock() {
             Ok(mut storage) => match storage.get_mut(&table_id) {
                 Some(table) => {
                     table.write(row);
                 }
-                None => {
-                    debug1!("Table not found");
-                }
+                None => {}
             },
-            Err(_) => {
-                debug1!("Failed to lock storage")
-            }
+            Err(_) => {}
         }
     }
 }
@@ -339,9 +310,7 @@ pub fn close_tables() {
                     (*table).close();
                 }
             }
-            Err(_) => {
-                debug1!("Failed to lock storage")
-            }
+            Err(_) => {}
         }
     }
 }
@@ -354,33 +323,24 @@ pub fn set_schema_for_read(table_id: u32, schema: Box<Schema>) {
                     table.set_schema(*schema);
                 }
                 None => {
-                    info!("Table not found, then create table");
                     let mut table = Table::new(table_id);
                     table.set_schema(*schema);
                     storage.insert(table_id, table);
                 }
             },
-            Err(_) => {
-                info!("Failed to lock storage")
-            }
+            Err(_) => {}
         }
     }
 }
 
-pub fn get_row(table_id: u32) -> Option<Row> {
+pub fn read(table_id: u32, row: &mut TupleSlot) -> bool {
     unsafe {
         match VIRTUAL_STORAGE.lock() {
             Ok(mut storage) => match storage.get_mut(&table_id) {
-                Some(table) => table.read(),
-                None => {
-                    debug1!("Table not found");
-                    None
-                }
+                Some(table) => table.read(row),
+                None => false,
             },
-            Err(_) => {
-                debug1!("Failed to lock storage");
-                None
-            }
+            Err(_) => false,
         }
     }
 }

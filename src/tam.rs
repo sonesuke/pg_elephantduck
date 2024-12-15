@@ -105,7 +105,6 @@ pub extern "C" fn pg_elephantduck_handler(_fcinfo: FunctionCallInfo) -> *mut Tab
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_slot_callbacks(_rel: Relation) -> *const TupleTableSlotOps {
-    debug1!("pg_elephantduck_slot_callbacks is called");
     // Minimal Implement.
     // See https://github.com/postgres/postgres/blob/master/src/include/executor/tuptable.h#L33
     &TTSOpsVirtual
@@ -125,7 +124,6 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     pscan: ParallelTableScanDesc,
     flags: uint32,
 ) -> TableScanDesc {
-    debug1!("pg_elephantduck_scan_begin is called");
     set_schema_for_read((*rel).rd_id.into(), get_schema_from_relation(rel));
     let scan = Box::new(ElephantDuckScan {
         rs_base: TableScanDescData {
@@ -144,7 +142,6 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_scan_end(scan: TableScanDesc) {
-    debug1!("pg_elephantduck_scan_end is called");
     if !scan.is_null() {
         let _ = Box::from_raw(scan as *mut ElephantDuckScan);
     }
@@ -159,7 +156,6 @@ unsafe extern "C" fn pg_elephantduck_scan_rescan(
     _allow_sync: bool,
     _allow_pagemode: bool,
 ) {
-    debug1!("pg_elephantduck_scan_rescan is called");
     unimplemented!()
 }
 
@@ -169,25 +165,23 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
     _direction: ScanDirection::Type,
     slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_getnextslot is called");
-
     ExecClearTuple(slot);
+    let elephantduck_scan = scan as *mut ElephantDuckScan;
+    let relid = (*(*elephantduck_scan).rs_base.rs_rd).rd_id;
 
-    let elephant_duck_scan = scan as *mut ElephantDuckScan;
-    let relid = (*(*elephant_duck_scan).rs_base.rs_rd).rd_id;
+    let tuple_descriptior = (*slot).tts_tupleDescriptor as *mut TupleDescData;
+    let natts: usize = (*tuple_descriptior).natts as usize;
+    let mut row = TupleSlot {
+        natts,
+        datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
+        nulls: std::slice::from_raw_parts_mut((*slot).tts_isnull, natts),
+    };
 
-    match get_row(relid.into()) {
-        Some(row) => {
-            let values = std::slice::from_raw_parts_mut((*slot).tts_values, row.len());
-            let isnull = std::slice::from_raw_parts_mut((*slot).tts_isnull, row.len());
-            for i in 0..row.len() {
-                values[i] = row[i].datum;
-                isnull[i] = row[i].is_null;
-            }
-            ExecStoreVirtualTuple(slot);
-            true
-        }
-        None => false,
+    if read(relid.into(), &mut row) {
+        ExecStoreVirtualTuple(slot);
+        true
+    } else {
+        false
     }
 }
 
@@ -197,7 +191,6 @@ unsafe extern "C" fn pg_elephantduck_scan_set_tidrange(
     _mintid: ItemPointer,
     _maxtid: ItemPointer,
 ) {
-    debug1!("pg_elephantduck_scan_set_tidrange is called");
     unimplemented!()
 }
 
@@ -207,43 +200,36 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot_tidrange(
     _direction: ScanDirection::Type,
     _slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_getnextslot_tidrange is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_parallelscan_estimate(_rel: Relation) -> Size {
-    debug1!("pg_elephantduck_parallelscan_estimate is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_parallelscan_initialize(_rel: Relation, _pscan: ParallelTableScanDesc) -> Size {
-    debug1!("pg_elephantduck_parallelscan_initialize is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_parallelscan_reinitialize(_rel: Relation, _pscan: ParallelTableScanDesc) {
-    debug1!("pg_elephantduck_parallelscan_reinitialize is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_index_fetch_begin(_rel: Relation) -> *mut IndexFetchTableData {
-    debug1!("pg_elephantduck_index_fetch_begin is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_index_fetch_reset(_data: *mut IndexFetchTableData) {
-    debug1!("pg_elephantduck_index_fetch_reset is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_index_fetch_end(_data: *mut IndexFetchTableData) {
-    debug1!("pg_elephantduck_index_fetch_end is called");
     unimplemented!()
 }
 
@@ -256,7 +242,6 @@ unsafe extern "C" fn pg_elephantduck_index_fetch_tuple(
     _call_again: *mut bool,
     _all_dead: *mut bool,
 ) -> bool {
-    debug1!("pg_elephantduck_index_fetch_tuple is called");
     unimplemented!()
 }
 
@@ -267,19 +252,16 @@ unsafe extern "C" fn pg_elephantduck_tuple_fetch_row_version(
     _snapshot: Snapshot,
     _slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_tuple_fetch_row_version is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_tuple_tid_valid(_scan: TableScanDesc, _tid: ItemPointer) -> bool {
-    debug1!("pg_elephantduck_tuple_tid_valid is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_tuple_get_latest_tid(_scan: TableScanDesc, _tid: ItemPointer) {
-    debug1!("pg_elephantduck_tuple_get_latest_tid is called");
     unimplemented!()
 }
 
@@ -289,7 +271,6 @@ unsafe extern "C" fn pg_elephantduck_tuple_satisfies_snapshot(
     _slot: *mut TupleTableSlot,
     _snapshot: Snapshot,
 ) -> bool {
-    debug1!("pg_elephantduck_tuple_satisfies_snapshot is called");
     unimplemented!()
 }
 
@@ -298,7 +279,6 @@ unsafe extern "C" fn pg_elephantduck_index_delete_tuples(
     _rel: Relation,
     _delstate: *mut TM_IndexDeleteOp,
 ) -> TransactionId {
-    debug1!("pg_elephantduck_index_delete_tuples is called");
     unimplemented!()
 }
 
@@ -310,18 +290,16 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
     _options: std::ffi::c_int,
     _bistate: *mut BulkInsertStateData,
 ) {
-    debug1!("pg_elephantduck_tuple_insert is called");
-
     let relid = (*rel).rd_id;
-    let nvalid = (*slot).tts_nvalid as usize;
-    let values = std::slice::from_raw_parts((*slot).tts_values, nvalid);
-    let isnull = std::slice::from_raw_parts((*slot).tts_isnull, nvalid);
 
-    let row = values
-        .iter()
-        .zip(isnull.iter())
-        .map(|(v, i)| Value { datum: *v, is_null: *i })
-        .collect();
+    let tuple_descriptior = (*slot).tts_tupleDescriptor as *mut TupleDescData;
+    let natts: usize = (*tuple_descriptior).natts as usize;
+
+    let row = TupleSlot {
+        natts,
+        datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
+        nulls: std::slice::from_raw_parts_mut((*slot).tts_isnull, natts),
+    };
     insert_table(relid.into(), row);
 }
 
@@ -334,7 +312,6 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert_speculative(
     _bistate: *mut BulkInsertStateData,
     _spec_token: uint32,
 ) {
-    debug1!("pg_elephantduck_tuple_insert_speculative is called");
     unimplemented!()
 }
 
@@ -345,7 +322,6 @@ unsafe extern "C" fn pg_elephantduck_tuple_complete_speculative(
     _spec_token: uint32,
     _succeeded: bool,
 ) {
-    debug1!("pg_elephantduck_tuple_complete_speculative is called");
     unimplemented!()
 }
 
@@ -358,7 +334,6 @@ unsafe extern "C" fn pg_elephantduck_multi_insert(
     _options: std::ffi::c_int,
     _bistate: *mut BulkInsertStateData,
 ) {
-    debug1!("pg_elephantduck_multi_insert is called");
     unimplemented!()
 }
 
@@ -374,7 +349,6 @@ unsafe extern "C" fn pg_elephantduck_tuple_delete(
     _tmfd: *mut TM_FailureData,
     _changing_part: bool,
 ) -> TM_Result::Type {
-    debug1!("pg_elephantduck_tuple_delete is called");
     unimplemented!()
 }
 
@@ -392,7 +366,6 @@ unsafe extern "C" fn pg_elephantduck_tuple_update(
     _lockmode: *mut LockTupleMode::Type,
     _update_indexes: *mut TU_UpdateIndexes::Type,
 ) -> TM_Result::Type {
-    debug1!("pg_elephantduck_tuple_update is called");
     unimplemented!()
 }
 
@@ -409,13 +382,11 @@ unsafe extern "C" fn pg_elephantduck_tuple_lock(
     _flags: uint8,
     _tmfd: *mut TM_FailureData,
 ) -> TM_Result::Type {
-    debug1!("pg_elephantduck_tuple_lock is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_finish_bulk_insert(_rel: Relation, _options: std::ffi::c_int) {
-    debug1!("pg_elephantduck_finish_bulk_insert is called");
     // not needed
 }
 
@@ -427,23 +398,17 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
     _freeze_xid: *mut TransactionId,
     _minmulti: *mut MultiXactId,
 ) {
-    debug1!("pg_elephantduck_relation_set_new_filelocator is called");
-
-    let name = name_data_to_str(&(*(*rel).rd_rel).relname);
     let relid = (*rel).rd_id;
     create_table(relid.into(), get_schema_from_relation(rel));
-    debug1!("name: {}", name);
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_nontransactional_truncate(_rel: Relation) {
-    debug1!("pg_elephantduck_relation_nontransactional_truncate is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_copy_data(_rel: Relation, _newrlocator: *const RelFileLocator) {
-    debug1!("pg_elephantduck_relation_copy_data is called");
     unimplemented!()
 }
 
@@ -461,7 +426,6 @@ unsafe extern "C" fn pg_elephantduck_relation_copy_for_cluster(
     _tups_vacuumed: *mut f64,
     _tups_recently_dead: *mut f64,
 ) {
-    debug1!("pg_elephantduck_relation_copy_for_cluster is called");
     unimplemented!()
 }
 
@@ -471,7 +435,6 @@ unsafe extern "C" fn pg_elephantduck_relation_vacuum(
     _params: *mut VacuumParams,
     _bstrategy: BufferAccessStrategy,
 ) {
-    debug1!("pg_elephantduck_relation_vacuum is called");
     unimplemented!()
 }
 
@@ -481,7 +444,6 @@ unsafe extern "C" fn pg_elephantduck_scan_analyze_next_block(
     _blockno: BlockNumber,
     _bstrategy: BufferAccessStrategy,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_analyze_next_block is called");
     unimplemented!()
 }
 
@@ -493,7 +455,6 @@ unsafe extern "C" fn pg_elephantduck_scan_analyze_next_tuple(
     _deadrows: *mut f64,
     _slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_analyze_next_tuple is called");
     unimplemented!()
 }
 
@@ -512,7 +473,6 @@ unsafe extern "C" fn pg_elephantduck_index_build_range_scan(
     _callback_state: *mut std::ffi::c_void,
     _scan: TableScanDesc,
 ) -> f64 {
-    debug1!("pg_elephantduck_index_build_range_scan is called");
     unimplemented!()
 }
 
@@ -524,25 +484,21 @@ unsafe extern "C" fn pg_elephantduck_index_validate_scan(
     _snapshot: Snapshot,
     _state: *mut ValidateIndexState,
 ) {
-    debug1!("pg_elephantduck_index_validate_scan is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_size(_rel: Relation, _for_k_number: ForkNumber::Type) -> uint64 {
-    debug1!("pg_elephantduck_relation_size is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_needs_toast_table(_rel: Relation) -> bool {
-    // debug1!("pg_elephantduck_relation_needs_toast_table is called");
     false // No need to create a toast table.
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_relation_toast_am(_rel: Relation) -> Oid {
-    debug1!("pg_elephantduck_relation_toast_am is called");
     unimplemented!()
 }
 
@@ -555,7 +511,6 @@ unsafe extern "C" fn pg_elephantduck_relation_fetch_toast_slice(
     _slicelength: int32,
     _result: *mut varlena,
 ) {
-    debug1!("pg_elephantduck_relation_fetch_toast_slice is called");
     unimplemented!()
 }
 
@@ -567,7 +522,6 @@ unsafe extern "C" fn pg_elephantduck_relation_estimate_size(
     _tuples: *mut f64,
     _allvisfrac: *mut f64,
 ) {
-    debug1!("pg_elephantduck_relation_estimate_size is called");
     // TODO Implement this function.
 }
 
@@ -576,7 +530,6 @@ unsafe extern "C" fn pg_elephantduck_scan_bitmap_next_block(
     _scan: TableScanDesc,
     _tbmres: *mut TBMIterateResult,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_bitmap_next_block is called");
     unimplemented!()
 }
 
@@ -586,7 +539,6 @@ unsafe extern "C" fn pg_elephantduck_scan_bitmap_next_tuple(
     _tbmres: *mut TBMIterateResult,
     _slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_bitmap_next_tuple is called");
     unimplemented!()
 }
 
@@ -595,7 +547,6 @@ unsafe extern "C" fn pg_elephantduck_scan_sample_next_block(
     _scan: TableScanDesc,
     _scanstate: *mut SampleScanState,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_sample_next_block is called");
     unimplemented!()
 }
 
@@ -605,14 +556,11 @@ unsafe extern "C" fn pg_elephantduck_scan_sample_next_tuple(
     _scanstate: *mut SampleScanState,
     _slot: *mut TupleTableSlot,
 ) -> bool {
-    debug1!("pg_elephantduck_scan_sample_next_tuple is called");
     unimplemented!()
 }
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_executor_finish_hook(query_desc: *mut QueryDesc) {
-    pgrx::debug1!("pg_elephantduck_executor_finish_hook is called");
-
     match PREV_EXECUTOR_FINISH_HOOK {
         Some(prev_hook) => {
             prev_hook(query_desc);
@@ -641,8 +589,6 @@ pub fn is_elephantduck_table(relid: Oid) -> bool {
 }
 
 pub fn init_tam_hooks() {
-    pgrx::log!("Initializing my ProcessUtility hook");
-
     unsafe {
         PREV_EXECUTOR_FINISH_HOOK = ExecutorFinish_hook;
         ExecutorFinish_hook = Some(pg_elephantduck_executor_finish_hook);
@@ -650,8 +596,6 @@ pub fn init_tam_hooks() {
 }
 
 pub fn finish_tam_hooks() {
-    pgrx::log!("Unloading my ProcessUtility hook");
-
     unsafe {
         ExecutorFinish_hook = PREV_EXECUTOR_FINISH_HOOK;
     }
