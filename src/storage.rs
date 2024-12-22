@@ -275,60 +275,49 @@ fn convert_datum_arrow_to_pg(field: &ArrayRef, column_index: usize, current_row:
     }
 }
 
-pub fn create_table(table_id: u32, schema: Box<Schema>) {
+pub fn create_table(table_id: u32, schema: Schema) {
     unsafe {
-        match VIRTUAL_STORAGE.lock() {
-            Ok(mut storage) => {
-                let mut table = Table::new(table_id);
-                table.set_schema(*schema);
-                storage.insert(table_id, table);
-            }
-            Err(_) => {}
+        if let Ok(mut storage) = VIRTUAL_STORAGE.lock() {
+            let mut table = Table::new(table_id);
+            table.set_schema(schema);
+            storage.insert(table_id, table);
         }
     }
 }
 
 pub fn insert_table(table_id: u32, row: TupleSlot) {
     unsafe {
-        match VIRTUAL_STORAGE.lock() {
-            Ok(mut storage) => match storage.get_mut(&table_id) {
-                Some(table) => {
-                    table.write(row);
-                }
-                None => {}
-            },
-            Err(_) => {}
+        if let Ok(mut storage) = VIRTUAL_STORAGE.lock() {
+            if let Some(table) = storage.get_mut(&table_id) {
+                table.write(row);
+            }
         }
     }
 }
 
 pub fn close_tables() {
     unsafe {
-        match VIRTUAL_STORAGE.lock() {
-            Ok(mut storage) => {
-                for table in storage.values_mut() {
-                    (*table).close();
-                }
+        if let Ok(mut storage) = VIRTUAL_STORAGE.lock() {
+            for table in storage.values_mut() {
+                (*table).close();
             }
-            Err(_) => {}
         }
     }
 }
 
-pub fn set_schema_for_read(table_id: u32, schema: Box<Schema>) {
+pub fn set_schema_for_read(table_id: u32, schema: Schema) {
     unsafe {
-        match VIRTUAL_STORAGE.lock() {
-            Ok(mut storage) => match storage.get_mut(&table_id) {
+        if let Ok(mut storage) = VIRTUAL_STORAGE.lock() {
+            match storage.get_mut(&table_id) {
                 Some(table) => {
-                    table.set_schema(*schema);
+                    table.set_schema(schema);
                 }
                 None => {
                     let mut table = Table::new(table_id);
-                    table.set_schema(*schema);
+                    table.set_schema(schema);
                     storage.insert(table_id, table);
                 }
-            },
-            Err(_) => {}
+            }
         }
     }
 }

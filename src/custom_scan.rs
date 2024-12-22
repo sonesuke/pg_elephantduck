@@ -49,7 +49,7 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
         let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
 
-        set_schema_for_read((*rel).rd_id.into(), get_schema_from_relation(rel));
+        set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel));
     }
 }
 
@@ -67,8 +67,8 @@ extern "C" fn pg_elephantduck_exec_custom_scan(csstate: *mut CustomScanState) ->
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
         let relid = (*rel).rd_id;
 
-        let tuple_descriptior = (*slot).tts_tupleDescriptor;
-        let natts: usize = (*tuple_descriptior).natts as usize;
+        let tuple_descriptor = (*slot).tts_tupleDescriptor;
+        let natts: usize = (*tuple_descriptor).natts as usize;
         let mut row = TupleSlot {
             natts,
             datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),

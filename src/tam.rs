@@ -124,7 +124,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     pscan: ParallelTableScanDesc,
     flags: uint32,
 ) -> TableScanDesc {
-    set_schema_for_read((*rel).rd_id.into(), get_schema_from_relation(rel));
+    set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel));
     let scan = Box::new(ElephantDuckScan {
         rs_base: TableScanDescData {
             rs_rd: rel,
@@ -169,8 +169,8 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
     let elephantduck_scan = scan as *mut ElephantDuckScan;
     let relid = (*(*elephantduck_scan).rs_base.rs_rd).rd_id;
 
-    let tuple_descriptior = (*slot).tts_tupleDescriptor as *mut TupleDescData;
-    let natts: usize = (*tuple_descriptior).natts as usize;
+    let tuple_descriptor = (*slot).tts_tupleDescriptor;
+    let natts: usize = (*tuple_descriptor).natts as usize;
     let mut row = TupleSlot {
         natts,
         datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
@@ -292,8 +292,8 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
 ) {
     let relid = (*rel).rd_id;
 
-    let tuple_descriptior = (*slot).tts_tupleDescriptor as *mut TupleDescData;
-    let natts: usize = (*tuple_descriptior).natts as usize;
+    let tuple_descriptor = (*slot).tts_tupleDescriptor;
+    let natts: usize = (*tuple_descriptor).natts as usize;
 
     let row = TupleSlot {
         natts,
@@ -399,7 +399,7 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
     _minmulti: *mut MultiXactId,
 ) {
     let relid = (*rel).rd_id;
-    create_table(relid.into(), get_schema_from_relation(rel));
+    create_table(relid.into(), *get_schema_from_relation(rel));
 }
 
 #[pg_guard]
