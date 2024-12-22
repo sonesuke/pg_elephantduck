@@ -4,6 +4,7 @@ use pgrx::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
+use crate::storage::*;
 use crate::tam::is_elephantduck_table;
 
 /// Custom scan state for elephantduck tables
@@ -15,7 +16,6 @@ struct PgElephantduckScanState {
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut CustomScan) -> *mut Node {
     // Implement the creation of custom scan state
-    debug1!("elephantduck: create custom scan state");
     let scan_state: *mut PgElephantduckScanState =
         palloc0(std::mem::size_of::<PgElephantduckScanState>()) as *mut PgElephantduckScanState;
     (*(scan_state as *mut Node)).type_ = NodeTag::T_CustomScanState;
@@ -25,27 +25,84 @@ unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut Custom
     (&(*scan_state).css as *const _) as *mut Node
 }
 
-#[pg_guard]
-extern "C" fn pg_elephantduck_begin_custom_scan(_csstate: *mut CustomScanState, _estate: *mut EState, _eflags: i32) {
-    debug1!("elephantduck: begin custom scan");
-    unimplemented!()
+fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
+    unsafe {
+        let tuple_desc = (*rel).rd_att;
+        let natts = (*tuple_desc).natts as usize;
+        let attrs = (*tuple_desc).attrs.as_slice(natts);
+        Box::new(
+            attrs
+                .iter()
+                .filter(|attr| !attr.is_dropped())
+                .map(|a| Attribute {
+                    column_id: a.attnum as u32,
+                    data_type: a.atttypid,
+                })
+                .collect(),
+        )
+    }
 }
 
 #[pg_guard]
-extern "C" fn pg_elephantduck_exec_custom_scan(_csstate: *mut CustomScanState) -> *mut TupleTableSlot {
-    debug1!("elephantduck: exec custom scan");
-    unimplemented!()
+extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _estate: *mut EState, _eflags: i32) {
+    unsafe {
+        let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
+        let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
+
+        set_schema_for_read((*rel).rd_id.into(), get_schema_from_relation(rel));
+    }
 }
 
 #[pg_guard]
-extern "C" fn pg_elephantduck_end_custom_scan(_csstate: *mut CustomScanState) {
-    debug1!("elephantduck: end custom scan");
-    unimplemented!()
+extern "C" fn pg_elephantduck_exec_custom_scan(csstate: *mut CustomScanState) -> *mut TupleTableSlot {
+    unsafe {
+        let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
+        let slot = (*elephantduck_scan_state).css.ss.ss_ScanTupleSlot;
+        let memory_context = (*elephantduck_scan_state).css.ss.ps.ps_ExprContext;
+
+        MemoryContextReset((*memory_context).ecxt_per_tuple_memory);
+        ExecClearTuple(slot);
+
+        let old_context = MemoryContextSwitchTo((*memory_context).ecxt_per_tuple_memory);
+        let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
+        let relid = (*rel).rd_id;
+
+        let tuple_descriptior = (*slot).tts_tupleDescriptor;
+        let natts: usize = (*tuple_descriptior).natts as usize;
+        let mut row = TupleSlot {
+            natts,
+            datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
+            nulls: std::slice::from_raw_parts_mut((*slot).tts_isnull, natts),
+        };
+
+        MemoryContextSwitchTo(old_context);
+        if read(relid.into(), &mut row) {
+            ExecStoreVirtualTuple(slot);
+            slot
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[pg_guard]
+extern "C" fn pg_elephantduck_end_custom_scan(csstate: *mut CustomScanState) {
+    info!("elephantduck: end custom scan");
+    unsafe {
+        if !csstate.is_null() {
+            let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
+            let memory_context = (*elephantduck_scan_state).css.ss.ps.ps_ExprContext;
+            let slot = (*elephantduck_scan_state).css.ss.ss_ScanTupleSlot;
+            MemoryContextReset((*memory_context).ecxt_per_tuple_memory);
+            ExecClearTuple(slot);
+        }
+    }
+    info!("elephantduck: end of end custom scan");
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_rescan_custom_scan(_csstate: *mut CustomScanState) {
-    debug1!("elephantduck: rescan custom scan");
+    info!("elephantduck: rescan custom scan");
     // Nothing to do
 }
 
@@ -251,7 +308,7 @@ pub fn init_custom_scan() {
         pg_sys::RegisterCustomScanMethods(ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods());
 
         PREV_SET_REL_PATHLIST_HOOK = pg_sys::set_rel_pathlist_hook;
-        // pg_sys::set_rel_pathlist_hook = Some(pg_elephantduck_set_rel_pathlist);
+        pg_sys::set_rel_pathlist_hook = Some(pg_elephantduck_set_rel_pathlist);
     }
 }
 
@@ -262,6 +319,6 @@ pub fn init_custom_scan() {
 pub fn finish_custom_scan() {
     unsafe {
         debug1!("elephantduck: finish custom scan");
-        // pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
+        pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
     }
 }
