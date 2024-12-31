@@ -50,7 +50,7 @@ fn get_schema_from_relation(rel: Relation, columns: Vec<i16>) -> Box<Schema> {
                                 column_id: a.attnum as u32,
                                 data_type: a.atttypid,
                             },
-                            None => return None,
+                            None => panic!("Column not found"),
                         }
                     })
                     .collect::<Vec<_>>(),
