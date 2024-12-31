@@ -22,7 +22,7 @@ fn extract_bool_expr(bool_expr: *mut BoolExpr) -> std::string::String {
             BoolExprType::AND_EXPR => expressions.join(" AND "),
             BoolExprType::OR_EXPR => expressions.join(" OR "),
             BoolExprType::NOT_EXPR => {
-                let condition = expressions.first().unwrap();
+                let condition = expressions.first().map_or("", |s| s);
                 format!("NOT ({})", condition).to_string()
             }
             _ => "".to_string(),
