@@ -298,9 +298,6 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
 
         // Remove exists paths, set a custom path for elephantduck tables
         if is_elephantduck_table((*rte).relid) {
-            // Remove exists paths
-            (*rel).pathlist = std::ptr::null_mut();
-
             // Create a custom path
             let custom_path: *mut CustomPath = palloc0(std::mem::size_of::<CustomPath>()) as *mut CustomPath;
             (*custom_path).path.type_ = NodeTag::T_CustomPath;
