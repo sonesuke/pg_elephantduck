@@ -13,12 +13,16 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::settings::{get_elephantduck_path, get_elephantduck_threads};
 
+#[derive(Debug)]
 pub struct Attribute {
     pub column_id: u32,
     pub data_type: pg_sys::Oid,
 }
 
-pub type Schema = Vec<Attribute>;
+pub struct Schema {
+    pub fields: Vec<Attribute>,
+    pub where_clause: Option<String>,
+}
 
 pub struct TupleSlot<'a> {
     pub natts: usize,
@@ -95,6 +99,7 @@ pub struct Table {
     table_id: u32,
     pg_types: Option<Vec<pg_sys::Oid>>,
     schema: Option<ArrowSchema>,
+    where_clause: Option<String>,
     writer: Option<parquet::arrow::arrow_writer::ArrowWriter<std::fs::File>>,
     reader: Option<DuckdbReader>,
 }
@@ -107,6 +112,7 @@ impl Table {
             schema: None,
             writer: None,
             reader: None,
+            where_clause: None,
         }
     }
 
@@ -117,6 +123,7 @@ impl Table {
 
     pub fn set_schema(&mut self, schema: Schema) {
         let fields: Fields = schema
+            .fields
             .iter()
             .map(|attr| {
                 Field::new(
@@ -127,7 +134,8 @@ impl Table {
             })
             .collect();
         self.schema = Some(ArrowSchema::new(fields));
-        self.pg_types = Some(schema.iter().map(|attr| attr.data_type).collect());
+        self.pg_types = Some(schema.fields.iter().map(|attr| attr.data_type).collect());
+        self.where_clause = schema.where_clause;
     }
 
     pub fn write(&mut self, row: TupleSlot) {
@@ -180,11 +188,30 @@ impl Table {
         }
     }
 
+    fn get_where_clause(&self) -> Option<std::string::String> {
+        match &self.where_clause {
+            Some(where_clause) => {
+                if !where_clause.is_empty() {
+                    Some(where_clause.clone())
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
     pub fn read(&mut self, row: &mut TupleSlot) -> bool {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
             let columns_clause = self.get_columns_clause();
-            let sql = format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path);
+            let sql = match self.get_where_clause() {
+                Some(where_clause) => format!(
+                    "SELECT {} FROM parquet_scan('{}') WHERE {}",
+                    columns_clause, file_path, where_clause
+                ),
+                None => format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path),
+            };
             self.reader = Some(DuckdbReader::new(sql, Arc::new(self.schema.clone().unwrap())));
         }
 

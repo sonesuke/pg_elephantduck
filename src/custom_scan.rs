@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use crate::storage::*;
 use crate::tam::is_elephantduck_table;
 
+use crate::extract_clauses::extract_clauses;
+
 /// Custom scan state for elephantduck tables
 struct PgElephantduckScanState {
     css: CustomScanState,
@@ -25,23 +27,28 @@ unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut Custom
     Box::into_raw(scan_state) as *mut Node
 }
 
-fn get_schema_from_relation(rel: Relation, columns: Vec<i16>) -> Box<Schema> {
+fn get_schema_from_relation(
+    rel: Relation,
+    columns: Vec<i16>,
+    where_clause: Option<std::string::String>,
+) -> Box<Schema> {
     unsafe {
         let tuple_desc = (*rel).rd_att;
         let natts = (*tuple_desc).natts as usize;
         let attrs = (*tuple_desc).attrs.as_slice(natts);
         match columns.len() {
-            0 => Box::new(
-                attrs
+            0 => Box::new(Schema {
+                fields: attrs
                     .iter()
                     .map(|a| Attribute {
                         column_id: a.attnum as u32,
                         data_type: a.atttypid,
                     })
                     .collect::<Vec<_>>(),
-            ),
-            _ => Box::new(
-                columns
+                where_clause,
+            }),
+            _ => Box::new(Schema {
+                fields: columns
                     .iter()
                     .map(|column| {
                         let attr = attrs.iter().find(|a| a.attnum == *column);
@@ -54,7 +61,8 @@ fn get_schema_from_relation(rel: Relation, columns: Vec<i16>) -> Box<Schema> {
                         }
                     })
                     .collect::<Vec<_>>(),
-            ),
+                where_clause,
+            }),
         }
     }
 }
@@ -65,6 +73,12 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
         let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
         let target_list = (*(*elephantduck_scan_state).css.ss.ps.plan).targetlist;
+
+        let where_clause = match (*elephantduck_scan_state).css.ss.ps.qual.is_null() {
+            false => Some(extract_clauses((*(*elephantduck_scan_state).css.ss.ps.qual).expr)),
+            true => None,
+        };
+
         let columns = if target_list.is_null() {
             Vec::<i16>::new()
         } else {
@@ -78,7 +92,10 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
                 })
                 .collect::<Vec<i16>>()
         };
-        set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel, columns));
+        set_schema_for_read(
+            (*rel).rd_id.into(),
+            *get_schema_from_relation(rel, columns, where_clause),
+        );
     }
 }
 
@@ -208,6 +225,10 @@ impl PgElephantDuckCustomExecMethods {
 static mut ELEPHANTDUCK_CUSTOM_EXEC_METHODS: Lazy<Mutex<PgElephantDuckCustomExecMethods>> =
     Lazy::new(|| Mutex::new(PgElephantDuckCustomExecMethods::new()));
 
+// fn dump_restrict_info(restrict_info: *mut RestrictInfo) {
+//     info!("restrict_info: {:?}", (*restrict_info).clause_relids);
+// }
+
 /// Extract actual clauses from a list of clauses
 ///
 /// * `rel` - List. The list of clauses.
@@ -229,11 +250,17 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     (*custom_scan).methods = ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods();
 
     (*custom_scan).custom_scan_tlist = tlist;
-
     (*custom_scan).scan.scanrelid = (*rel).relid;
     (*custom_scan).scan.plan.targetlist = tlist;
-    (*custom_scan).scan.plan.qual = extract_actual_clauses(clauses, false);
 
+    // let elements = std::slice::from_raw_parts((*clauses).elements, (*clauses).length as usize);
+    // for element in elements {
+    //     let restrict_info = element.ptr_value as *mut RestrictInfo;
+    //     let expr = (*restrict_info).clause as *mut Expr;
+    //     info!("clause: {:?}", extract_clauses(expr));
+    // }
+
+    (*custom_scan).scan.plan.qual = extract_actual_clauses(clauses, false);
     (*custom_scan).custom_exprs = extract_actual_clauses((*best_path).custom_private, false);
 
     &mut ((*custom_scan).scan.plan) as *mut Plan
@@ -298,6 +325,9 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
 
         // Remove exists paths, set a custom path for elephantduck tables
         if is_elephantduck_table((*rte).relid) {
+            // Remove exists paths
+            (*rel).pathlist = std::ptr::null_mut();
+
             // Create a custom path
             let custom_path: *mut CustomPath = palloc0(std::mem::size_of::<CustomPath>()) as *mut CustomPath;
             (*custom_path).path.type_ = NodeTag::T_CustomPath;

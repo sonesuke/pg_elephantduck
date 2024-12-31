@@ -82,8 +82,8 @@ fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
         let tuple_desc = (*rel).rd_att;
         let natts = (*tuple_desc).natts as usize;
         let attrs = (*tuple_desc).attrs.as_slice(natts);
-        Box::new(
-            attrs
+        Box::new(Schema {
+            fields: attrs
                 .iter()
                 .filter(|attr| !attr.is_dropped())
                 .map(|a| Attribute {
@@ -91,7 +91,8 @@ fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
                     data_type: a.atttypid,
                 })
                 .collect(),
-        )
+            where_clause: None,
+        })
     }
 }
 

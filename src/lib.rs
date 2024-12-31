@@ -6,6 +6,7 @@ use custom_scan::{finish_custom_scan, init_custom_scan};
 mod settings;
 use settings::init_gucs;
 
+mod extract_clauses;
 mod storage;
 mod tam;
 use tam::{finish_tam_hooks, init_tam_hooks};
