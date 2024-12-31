@@ -15,31 +15,47 @@ struct PgElephantduckScanState {
 
 #[pg_guard]
 unsafe extern "C" fn pg_elephantduck_create_custom_scan_state(cscan: *mut CustomScan) -> *mut Node {
-    // Implement the creation of custom scan state
-    let scan_state: *mut PgElephantduckScanState =
-        palloc0(std::mem::size_of::<PgElephantduckScanState>()) as *mut PgElephantduckScanState;
-    (*(scan_state as *mut Node)).type_ = NodeTag::T_CustomScanState;
-    (*scan_state).css.flags = (*cscan).flags;
-    (*scan_state).css.methods = ELEPHANTDUCK_CUSTOM_EXEC_METHODS.lock().unwrap().get_methods();
+    let mut scan_state = Box::new(PgElephantduckScanState {
+        css: CustomScanState { ..Default::default() },
+    });
+    scan_state.css.ss.ps.type_ = NodeTag::T_CustomScanState;
+    scan_state.css.flags = (*cscan).flags;
+    scan_state.css.methods = ELEPHANTDUCK_CUSTOM_EXEC_METHODS.lock().unwrap().get_methods();
 
-    (&(*scan_state).css as *const _) as *mut Node
+    Box::into_raw(scan_state) as *mut Node
 }
 
-fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
+fn get_schema_from_relation(rel: Relation, columns: Vec<i16>) -> Box<Schema> {
     unsafe {
         let tuple_desc = (*rel).rd_att;
         let natts = (*tuple_desc).natts as usize;
         let attrs = (*tuple_desc).attrs.as_slice(natts);
-        Box::new(
-            attrs
-                .iter()
-                .filter(|attr| !attr.is_dropped())
-                .map(|a| Attribute {
-                    column_id: a.attnum as u32,
-                    data_type: a.atttypid,
-                })
-                .collect(),
-        )
+        match columns.len() {
+            0 => Box::new(
+                attrs
+                    .iter()
+                    .map(|a| Attribute {
+                        column_id: a.attnum as u32,
+                        data_type: a.atttypid,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => Box::new(
+                columns
+                    .iter()
+                    .map(|column| {
+                        let attr = attrs.iter().find(|a| a.attnum == *column);
+                        match attr {
+                            Some(a) => Attribute {
+                                column_id: a.attnum as u32,
+                                data_type: a.atttypid,
+                            },
+                            None => return None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        }
     }
 }
 
@@ -48,8 +64,21 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
     unsafe {
         let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
-
-        set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel));
+        let target_list = (*(*elephantduck_scan_state).css.ss.ps.plan).targetlist;
+        let columns = if target_list.is_null() {
+            Vec::<i16>::new()
+        } else {
+            let elements = std::slice::from_raw_parts((*target_list).elements, (*target_list).length as usize);
+            elements
+                .iter()
+                .map(|e| {
+                    let target_entry = e.ptr_value as *const TargetEntry;
+                    let var = (*target_entry).expr as *const Var;
+                    (*var).varattnosyn
+                })
+                .collect::<Vec<i16>>()
+        };
+        set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel, columns));
     }
 }
 
@@ -87,22 +116,26 @@ extern "C" fn pg_elephantduck_exec_custom_scan(csstate: *mut CustomScanState) ->
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_end_custom_scan(csstate: *mut CustomScanState) {
-    info!("elephantduck: end custom scan");
     unsafe {
         if !csstate.is_null() {
             let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
+            let scan_descriptor = (*elephantduck_scan_state).css.ss.ss_currentScanDesc;
             let memory_context = (*elephantduck_scan_state).css.ss.ps.ps_ExprContext;
             let slot = (*elephantduck_scan_state).css.ss.ss_ScanTupleSlot;
             MemoryContextReset((*memory_context).ecxt_per_tuple_memory);
             ExecClearTuple(slot);
+
+            // I cannot understand why this line is make a server termination
+            // let _ = Box::from_raw(csstate as *mut PgElephantduckScanState);
+            if !scan_descriptor.is_null() {
+                table_endscan(scan_descriptor);
+            }
         }
     }
-    info!("elephantduck: end of end custom scan");
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_rescan_custom_scan(_csstate: *mut CustomScanState) {
-    info!("elephantduck: rescan custom scan");
     // Nothing to do
 }
 
@@ -190,16 +223,17 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     clauses: *mut List,
     _custom_plans: *mut List,
 ) -> *mut Plan {
-    debug1!("elephantduck: plan custom path");
-
     let custom_scan: *mut CustomScan = palloc0(std::mem::size_of::<CustomScan>()) as *mut CustomScan;
     (*(custom_scan as *mut Node)).type_ = NodeTag::T_CustomScan;
 
     (*custom_scan).methods = ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods();
 
+    (*custom_scan).custom_scan_tlist = tlist;
+
     (*custom_scan).scan.scanrelid = (*rel).relid;
     (*custom_scan).scan.plan.targetlist = tlist;
     (*custom_scan).scan.plan.qual = extract_actual_clauses(clauses, false);
+
     (*custom_scan).custom_exprs = extract_actual_clauses((*best_path).custom_private, false);
 
     &mut ((*custom_scan).scan.plan) as *mut Plan
@@ -252,8 +286,6 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
     rte: *mut RangeTblEntry,
 ) {
     unsafe {
-        debug1!("elephantduck: set rel pathlist");
-
         // Call the previous set_rel_pathlist hook for PostgreSQL manner
         if let Some(prev_hook) = PREV_SET_REL_PATHLIST_HOOK {
             prev_hook(root, rel, rti, rte);
@@ -261,14 +293,11 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
 
         // Check if the relation is a base relation
         if (*rte).relid == InvalidOid || (*rte).rtekind != RTEKind::RTE_RELATION || (*rte).inh {
-            debug1!("elephantduck: return because of invalid rte");
             return;
         }
 
         // Remove exists paths, set a custom path for elephantduck tables
         if is_elephantduck_table((*rte).relid) {
-            debug1!("elephantduck: set rel pathlist for elephantduck table");
-
             // Remove exists paths
             (*rel).pathlist = std::ptr::null_mut();
 
@@ -304,7 +333,6 @@ static mut PREV_SET_REL_PATHLIST_HOOK: Option<
 /// It registers custom scan methods and sets a hook to set_rel_pathlist.
 pub fn init_custom_scan() {
     unsafe {
-        debug1!("elephantduck: init custom scan");
         pg_sys::RegisterCustomScanMethods(ELEPHANTDUCK_CUSTOM_SCAN_METHODS.lock().unwrap().get_methods());
 
         PREV_SET_REL_PATHLIST_HOOK = pg_sys::set_rel_pathlist_hook;
@@ -318,7 +346,6 @@ pub fn init_custom_scan() {
 /// It resets the hook to set_rel_pathlist.
 pub fn finish_custom_scan() {
     unsafe {
-        debug1!("elephantduck: finish custom scan");
         pg_sys::set_rel_pathlist_hook = PREV_SET_REL_PATHLIST_HOOK;
     }
 }
