@@ -148,7 +148,7 @@ pub fn extract_clauses(expr: *mut Expr) -> std::string::String {
             NodeTag::T_NullTest => extract_null_test(expr as *mut NullTest),
             NodeTag::T_Const => extract_const_expr(expr as *mut Const),
             _ => {
-                panic!("Unknown expression type");
+                panic!("Unknown expression type: {:?}", (*expr).type_);
             }
         }
     }
