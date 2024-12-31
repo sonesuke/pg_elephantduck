@@ -44,7 +44,7 @@ fn extract_op_expr(op_expr: *mut OpExpr) -> std::string::String {
 
         match opname.as_str() {
             "=" => {
-                let left = expressions.first().unwrap();
+                let left = expressions.get(0).unwrap_or(&"<missing>".to_string());
                 let right = expressions.last().unwrap();
                 format!("{} = {}", left, right).to_string()
             }
