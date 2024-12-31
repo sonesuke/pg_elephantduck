@@ -72,7 +72,7 @@ impl DuckdbReader {
 
         match &self.record_batch {
             Some(record_batch) => {
-                for column_index in 0..row.natts {
+                for column_index in 0..record_batch.num_columns() {
                     let field = record_batch.column(column_index);
                     convert_datum_arrow_to_pg(field, column_index, self.current_row, row);
                 }
@@ -167,13 +167,25 @@ impl Table {
         }
     }
 
+    pub fn get_columns_clause(&self) -> String {
+        if let Some(schema) = self.schema.as_ref() {
+            schema
+                .fields()
+                .iter()
+                .map(|field| field.name().as_str())
+                .collect::<Vec<&str>>()
+                .join(", ")
+        } else {
+            "1".to_string()
+        }
+    }
+
     pub fn read(&mut self, row: &mut TupleSlot) -> bool {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
-            self.reader = Some(DuckdbReader::new(
-                format!("SELECT * FROM parquet_scan('{}')", file_path),
-                Arc::new(self.schema.clone().unwrap()),
-            ));
+            let columns_clause = self.get_columns_clause();
+            let sql = format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path);
+            self.reader = Some(DuckdbReader::new(sql, Arc::new(self.schema.clone().unwrap())));
         }
 
         match &mut self.reader {
