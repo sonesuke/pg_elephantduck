@@ -197,4 +197,19 @@ pub mod tests {
         let count = Spi::get_one::<i64>("SELECT COUNT(*)::INT8 FROM test WHERE num < 5;");
         assert_eq!(count, Ok(Some(4)), "Should generate 4 rows");
     }
+
+    #[pg_test]
+    fn test_tablesample_clause() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test USING elephantduck AS SELECT GENERATE_SERIES(1, 100) AS num;
+        ",
+        );
+        let count = Spi::get_one::<i64>("SELECT COUNT(*)::INT8 FROM test TABLESAMPLE SYSTEM (10) REPEATABLE (0);");
+        assert_ne!(count, Ok(Some(15)), "Should generate around 10 rows");
+        assert_ne!(Ok(Some(5)), count, "Should generate around 10 rows");
+    }
 }

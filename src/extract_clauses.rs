@@ -138,6 +138,26 @@ fn extract_list(list: *mut List) -> std::string::String {
     }
 }
 
+fn extract_tablesample(tablesample: *mut TableSampleClause) -> std::string::String {
+    unsafe {
+        let args_ptr = (*tablesample).args;
+        let args = std::slice::from_raw_parts((*args_ptr).elements, (*args_ptr).length as usize);
+        let repeatable = (*tablesample).repeatable;
+        let args = args
+            .iter()
+            .map(|e| extract_clauses(e.ptr_value as *mut Expr))
+            .collect::<Vec<std::string::String>>()
+            .join(", ");
+        match repeatable.is_null() {
+            true => format!("USING SAMPLE {} PERCENT (bernoulli)", args),
+            false => {
+                let repeatable = extract_clauses(repeatable);
+                format!("USING SAMPLE {} PERCENT (bernoulli, {})", args, repeatable)
+            }
+        }
+    }
+}
+
 pub fn extract_clauses(expr: *mut Expr) -> std::string::String {
     unsafe {
         match (*expr).type_ {
@@ -147,6 +167,7 @@ pub fn extract_clauses(expr: *mut Expr) -> std::string::String {
             NodeTag::T_BoolExpr => extract_bool_expr(expr as *mut BoolExpr),
             NodeTag::T_NullTest => extract_null_test(expr as *mut NullTest),
             NodeTag::T_Const => extract_const_expr(expr as *mut Const),
+            NodeTag::T_TableSampleClause => extract_tablesample(expr as *mut TableSampleClause),
             _ => {
                 panic!("Unknown expression type: {:?}", (*expr).type_);
             }
