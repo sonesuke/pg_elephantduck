@@ -9,6 +9,7 @@ use pgrx::pg_sys::{self};
 use pgrx::prelude::*;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::settings::{get_elephantduck_path, get_elephantduck_threads};
@@ -118,7 +119,9 @@ impl Table {
 
     fn get_path(&self, table_id: u32) -> String {
         let dir = get_elephantduck_path().unwrap().to_str().unwrap();
-        format!("{}table_{}.parquet", dir, table_id)
+        let mut path = PathBuf::from(dir);
+        path.push(format!("table_{}.parquet", table_id));
+        path.to_str().unwrap().to_string()
     }
 
     pub fn set_schema(&mut self, schema: Schema) {
@@ -141,6 +144,7 @@ impl Table {
     pub fn write(&mut self, row: TupleSlot) {
         if self.writer.is_none() {
             let file_path = self.get_path(self.table_id);
+            info!("File path: {}", file_path);
             let parquet_file = std::fs::File::create(file_path.clone()).unwrap();
             let writer_properties = WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::ZSTD(
@@ -212,6 +216,7 @@ impl Table {
                 ),
                 None => format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path),
             };
+            info!("SQL: {}", sql);
             self.reader = Some(DuckdbReader::new(sql, Arc::new(self.schema.clone().unwrap())));
         }
 

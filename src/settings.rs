@@ -1,5 +1,8 @@
 use once_cell::sync::Lazy;
+use std::env;
 use std::ffi::{CStr, CString};
+use std::fs;
+use std::path::PathBuf;
 
 use pgrx::{GucContext, GucFlags, GucRegistry, GucSetting};
 
@@ -11,8 +14,22 @@ pub struct ElephantduckGucSettings {
 impl ElephantduckGucSettings {
     pub fn new() -> Self {
         let default_path = {
-            let default_path = CString::new("/tmp").unwrap();
-            Box::leak(default_path.into_boxed_c_str())
+            let data_root_cstring = match env::var("PGDATA") {
+                Ok(pgdata) => pgdata,
+                Err(_) => "/tmp".to_string(),
+            };
+
+            let mut path = PathBuf::from(data_root_cstring);
+            path.push("elephantduck");
+
+            // if the directory does not exist, create it
+            if !path.exists() {
+                fs::create_dir_all(&path).expect("Failed to create directory");
+            }
+
+            let path_str = path.to_str().expect("Failed to convert path to str");
+            let c_string = CString::new(path_str).expect("CString::new failed");
+            Box::leak(c_string.into_boxed_c_str())
         };
 
         Self {
