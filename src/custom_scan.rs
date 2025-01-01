@@ -31,6 +31,7 @@ fn get_schema_from_relation(
     rel: Relation,
     columns: Vec<i16>,
     where_clause: Option<std::string::String>,
+    sample_clause: Option<std::string::String>,
 ) -> Box<Schema> {
     unsafe {
         let tuple_desc = (*rel).rd_att;
@@ -46,6 +47,7 @@ fn get_schema_from_relation(
                     })
                     .collect::<Vec<_>>(),
                 where_clause,
+                sample_clause,
             }),
             _ => Box::new(Schema {
                 fields: columns
@@ -62,6 +64,7 @@ fn get_schema_from_relation(
                     })
                     .collect::<Vec<_>>(),
                 where_clause,
+                sample_clause,
             }),
         }
     }
@@ -79,6 +82,19 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
             true => None,
         };
 
+        let custom_private = (*((*elephantduck_scan_state).css.ss.ps.plan as *mut CustomScan)).custom_private;
+        let sample_clause = match custom_private.is_null() {
+            false => {
+                let elements =
+                    std::slice::from_raw_parts((*custom_private).elements, (*custom_private).length as usize);
+                if elements.is_empty() {
+                    None
+                } else {
+                    Some(extract_clauses(elements[0].ptr_value as *mut Expr))
+                }
+            }
+            true => None,
+        };
         let columns = if target_list.is_null() {
             Vec::<i16>::new()
         } else {
@@ -94,7 +110,7 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
         };
         set_schema_for_read(
             (*rel).rd_id.into(),
-            *get_schema_from_relation(rel, columns, where_clause),
+            *get_schema_from_relation(rel, columns, where_clause, sample_clause),
         );
     }
 }
@@ -141,6 +157,11 @@ extern "C" fn pg_elephantduck_end_custom_scan(csstate: *mut CustomScanState) {
             let slot = (*elephantduck_scan_state).css.ss.ss_ScanTupleSlot;
             MemoryContextReset((*memory_context).ecxt_per_tuple_memory);
             ExecClearTuple(slot);
+
+            let custom_scan = (*elephantduck_scan_state).css.ss.ps.plan as *mut CustomScan;
+            if !(*custom_scan).custom_private.is_null() {
+                list_free((*custom_scan).custom_private);
+            }
 
             // I cannot understand why this line is make a server termination
             // let _ = Box::from_raw(csstate as *mut PgElephantduckScanState);
@@ -253,15 +274,8 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     (*custom_scan).scan.scanrelid = (*rel).relid;
     (*custom_scan).scan.plan.targetlist = tlist;
 
-    // let elements = std::slice::from_raw_parts((*clauses).elements, (*clauses).length as usize);
-    // for element in elements {
-    //     let restrict_info = element.ptr_value as *mut RestrictInfo;
-    //     let expr = (*restrict_info).clause as *mut Expr;
-    //     info!("clause: {:?}", extract_clauses(expr));
-    // }
-
     (*custom_scan).scan.plan.qual = extract_actual_clauses(clauses, false);
-    (*custom_scan).custom_exprs = extract_actual_clauses((*best_path).custom_private, false);
+    (*custom_scan).custom_private = (*best_path).custom_private;
 
     &mut ((*custom_scan).scan.plan) as *mut Plan
 }
@@ -336,7 +350,14 @@ extern "C" fn pg_elephantduck_set_rel_pathlist(
             (*custom_path).path.pathtarget = (*rel).reltarget;
             (*custom_path).path.param_info = get_baserel_parampathinfo(root, rel, (*rel).lateral_relids);
             (*custom_path).flags = 0;
-            (*custom_path).custom_private = std::ptr::null_mut();
+            if (*rte).tablesample.is_null() {
+                (*custom_path).custom_private = std::ptr::null_mut();
+            } else {
+                let tablesample_clause = Box::leak(Box::new(ListCell {
+                    ptr_value: copyObjectImpl((*rte).tablesample as *mut core::ffi::c_void),
+                }));
+                (*custom_path).custom_private = list_make1_impl(NodeTag::T_List, *tablesample_clause);
+            }
             (*custom_path).methods = ELEPHANTDUCK_CUSTOM_PATH_METHODS.lock().unwrap().get_methods();
 
             // TODO calculate cost

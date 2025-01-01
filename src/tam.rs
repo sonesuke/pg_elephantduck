@@ -92,6 +92,7 @@ fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
                 })
                 .collect(),
             where_clause: None,
+            sample_clause: None,
         })
     }
 }

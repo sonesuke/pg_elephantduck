@@ -23,6 +23,7 @@ pub struct Attribute {
 pub struct Schema {
     pub fields: Vec<Attribute>,
     pub where_clause: Option<String>,
+    pub sample_clause: Option<String>,
 }
 
 pub struct TupleSlot<'a> {
@@ -100,9 +101,10 @@ pub struct Table {
     table_id: u32,
     pg_types: Option<Vec<pg_sys::Oid>>,
     schema: Option<ArrowSchema>,
-    where_clause: Option<String>,
     writer: Option<parquet::arrow::arrow_writer::ArrowWriter<std::fs::File>>,
     reader: Option<DuckdbReader>,
+    where_clause: Option<String>,
+    sample_clause: Option<String>,
 }
 
 impl Table {
@@ -114,6 +116,7 @@ impl Table {
             writer: None,
             reader: None,
             where_clause: None,
+            sample_clause: None,
         }
     }
 
@@ -139,12 +142,12 @@ impl Table {
         self.schema = Some(ArrowSchema::new(fields));
         self.pg_types = Some(schema.fields.iter().map(|attr| attr.data_type).collect());
         self.where_clause = schema.where_clause;
+        self.sample_clause = schema.sample_clause;
     }
 
     pub fn write(&mut self, row: TupleSlot) {
         if self.writer.is_none() {
             let file_path = self.get_path(self.table_id);
-            info!("File path: {}", file_path);
             let parquet_file = std::fs::File::create(file_path.clone()).unwrap();
             let writer_properties = WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::ZSTD(
@@ -209,14 +212,17 @@ impl Table {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
             let columns_clause = self.get_columns_clause();
-            let sql = match self.get_where_clause() {
+            let mut sql = match self.get_where_clause() {
                 Some(where_clause) => format!(
                     "SELECT {} FROM parquet_scan('{}') WHERE {}",
                     columns_clause, file_path, where_clause
                 ),
                 None => format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path),
             };
-            info!("SQL: {}", sql);
+            sql = match &self.sample_clause {
+                Some(sample_clause) => format!("{} {}", sql, sample_clause),
+                None => sql,
+            };
             self.reader = Some(DuckdbReader::new(sql, Arc::new(self.schema.clone().unwrap())));
         }
 
