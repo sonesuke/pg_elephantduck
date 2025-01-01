@@ -13,7 +13,6 @@ pub mod tests {
             "
         DROP EXTENSION IF EXISTS pg_elephantduck CASCADE;
         CREATE EXTENSION pg_elephantduck;
-        set elephantduck.path = '/Users/sonesuke/pg_elephantduck/';
         ",
         );
     }
