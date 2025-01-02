@@ -87,7 +87,7 @@ fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
                 .iter()
                 .filter(|attr| !attr.is_dropped())
                 .map(|a| Attribute {
-                    column_id: a.attnum as u32,
+                    column_id: a.attnum,
                     data_type: a.atttypid,
                 })
                 .collect(),

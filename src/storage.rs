@@ -16,7 +16,7 @@ use crate::settings::{get_elephantduck_path, get_elephantduck_threads};
 
 #[derive(Debug)]
 pub struct Attribute {
-    pub column_id: u32,
+    pub column_id: i16,
     pub data_type: pg_sys::Oid,
 }
 
@@ -36,11 +36,12 @@ struct DuckdbReader {
     statement: &'static mut Statement<'static>,
     arrow_stream: &'static mut ArrowStream<'static>,
     record_batch: Option<RecordBatch>,
+    pg_types: Option<Vec<pg_sys::Oid>>,
     current_row: usize,
 }
 
 impl DuckdbReader {
-    pub fn new(sql: String, schema: SchemaRef) -> Self {
+    pub fn new(sql: String, schema: SchemaRef, pg_types: Option<Vec<pg_sys::Oid>>) -> Self {
         let config = Config::default().threads(get_elephantduck_threads().into()).unwrap();
         let connection = Connection::open_in_memory_with_flags(config).unwrap();
 
@@ -58,6 +59,7 @@ impl DuckdbReader {
             statement,
             arrow_stream,
             record_batch: None,
+            pg_types,
             current_row: 0,
         }
     }
@@ -78,9 +80,10 @@ impl DuckdbReader {
 
         match &self.record_batch {
             Some(record_batch) => {
-                for column_index in 0..record_batch.num_columns() {
+                let pg_types = self.pg_types.as_ref().unwrap();
+                for (column_index, pg_type) in pg_types.iter().enumerate() {
                     let field = record_batch.column(column_index);
-                    convert_datum_arrow_to_pg(field, column_index, self.current_row, row);
+                    convert_datum_arrow_to_pg(field, column_index, *pg_type, self.current_row, row);
                 }
                 self.current_row += 1;
                 true
@@ -105,6 +108,7 @@ pub struct Table {
     reader: Option<DuckdbReader>,
     where_clause: Option<String>,
     sample_clause: Option<String>,
+    include_ctid: bool,
 }
 
 impl Table {
@@ -117,6 +121,7 @@ impl Table {
             reader: None,
             where_clause: None,
             sample_clause: None,
+            include_ctid: false,
         }
     }
 
@@ -133,7 +138,13 @@ impl Table {
             .iter()
             .map(|attr| {
                 Field::new(
-                    format!("column_{}", attr.column_id),
+                    match attr.column_id {
+                        -1 => {
+                            self.include_ctid = true;
+                            "file_row_number".to_string()
+                        }
+                        _ => format!("column_{}", attr.column_id),
+                    },
                     convert_datatype_pg_to_arrow(attr.data_type),
                     true,
                 )
@@ -212,18 +223,30 @@ impl Table {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
             let columns_clause = self.get_columns_clause();
+            let file_row_number_clause = if self.include_ctid {
+                ", file_row_number = true"
+            } else {
+                ""
+            };
             let mut sql = match self.get_where_clause() {
                 Some(where_clause) => format!(
-                    "SELECT {} FROM parquet_scan('{}') WHERE {}",
-                    columns_clause, file_path, where_clause
+                    "SELECT {} FROM parquet_scan('{}'{}) WHERE {}",
+                    columns_clause, file_path, file_row_number_clause, where_clause
                 ),
-                None => format!("SELECT {} FROM parquet_scan('{}')", columns_clause, file_path),
+                None => format!(
+                    "SELECT {} FROM parquet_scan('{}'{})",
+                    columns_clause, file_path, file_row_number_clause
+                ),
             };
             sql = match &self.sample_clause {
                 Some(sample_clause) => format!("{} {}", sql, sample_clause),
                 None => sql,
             };
-            self.reader = Some(DuckdbReader::new(sql, Arc::new(self.schema.clone().unwrap())));
+            self.reader = Some(DuckdbReader::new(
+                sql,
+                Arc::new(self.schema.clone().unwrap()),
+                self.pg_types.clone(),
+            ));
         }
 
         match &mut self.reader {
@@ -255,6 +278,7 @@ fn convert_datatype_pg_to_arrow(data_type_oid: pg_sys::Oid) -> arrow::datatypes:
         pg_sys::FLOAT4OID => arrow::datatypes::DataType::Float32,
         pg_sys::FLOAT8OID => arrow::datatypes::DataType::Float64,
         pg_sys::TEXTOID => arrow::datatypes::DataType::Utf8,
+        pg_sys::TIDOID => arrow::datatypes::DataType::Int64,
         _ => panic!("Invalid data type {:?}", data_type_oid),
     }
 }
@@ -289,7 +313,13 @@ fn convert_datum_pg_to_arrow(
     }
 }
 
-fn convert_datum_arrow_to_pg(field: &ArrayRef, column_index: usize, current_row: usize, row: &mut TupleSlot) {
+fn convert_datum_arrow_to_pg(
+    field: &ArrayRef,
+    column_index: usize,
+    pg_type: pg_sys::Oid,
+    current_row: usize,
+    row: &mut TupleSlot,
+) {
     match field.data_type() {
         arrow::datatypes::DataType::Boolean => {
             let array = field.as_any().downcast_ref::<arrow::array::BooleanArray>().unwrap();
@@ -301,11 +331,22 @@ fn convert_datum_arrow_to_pg(field: &ArrayRef, column_index: usize, current_row:
             row.datum[column_index] = array.value(current_row).into_datum().unwrap();
             row.nulls[column_index] = array.is_null(current_row);
         }
-        arrow::datatypes::DataType::Int64 => {
-            let array = field.as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
-            row.datum[column_index] = array.value(current_row).into_datum().unwrap();
-            row.nulls[column_index] = array.is_null(current_row);
-        }
+        arrow::datatypes::DataType::Int64 => match pg_type {
+            pg_sys::TIDOID => {
+                let array = field.as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
+                let mut tid = unsafe { PgBox::<pg_sys::ItemPointerData>::alloc() };
+                tid.ip_blkid.bi_hi = 0;
+                tid.ip_blkid.bi_lo = 0;
+                tid.ip_posid = array.value(current_row) as u16;
+                row.datum[column_index] = tid.into_datum().unwrap();
+                row.nulls[column_index] = false;
+            }
+            _ => {
+                let array = field.as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
+                row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+                row.nulls[column_index] = array.is_null(current_row);
+            }
+        },
         arrow::datatypes::DataType::Float32 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float32Array>().unwrap();
             row.datum[column_index] = array.value(current_row).into_datum().unwrap();
