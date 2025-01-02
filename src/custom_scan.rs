@@ -55,9 +55,9 @@ fn get_schema_from_relation(
                             data_type: a.atttypid,
                         },
                         None => {
-                            if *column == -1 {
+                            if *column == pg_sys::SelfItemPointerAttributeNumber as i16 {
                                 Attribute {
-                                    column_id: -1,
+                                    column_id: pg_sys::SelfItemPointerAttributeNumber as i16,
                                     data_type: pg_sys::TIDOID,
                                 }
                             } else {
@@ -80,7 +80,6 @@ fn get_schema_from_relation(
 #[pg_guard]
 extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _estate: *mut EState, _eflags: i32) {
     unsafe {
-        info!("pg_elephantduck_begin_custom_scan");
         let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
         let target_list = (*(*elephantduck_scan_state).css.ss.ps.plan).targetlist;

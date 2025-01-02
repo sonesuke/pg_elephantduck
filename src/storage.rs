@@ -138,8 +138,8 @@ impl Table {
             .iter()
             .map(|attr| {
                 Field::new(
-                    match attr.column_id {
-                        -1 => {
+                    match attr.column_id as i32 {
+                        pg_sys::SelfItemPointerAttributeNumber => {
                             self.include_ctid = true;
                             "file_row_number".to_string()
                         }
