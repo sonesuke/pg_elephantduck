@@ -212,4 +212,21 @@ pub mod tests {
         assert_ne!(count, Ok(Some(15)), "Should generate around 10 rows");
         assert_ne!(Ok(Some(5)), count, "Should generate around 10 rows");
     }
+
+    #[pg_test]
+    fn test_ctid() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test USING elephantduck AS SELECT GENERATE_SERIES(1, 10) AS num;
+        ",
+        );
+        let count = Spi::get_one::<i64>("SELECT COUNT(ctid) FROM test;");
+        assert_eq!(count, Ok(Some(10)), "Should generate 10 rows");
+
+        let count = Spi::get_one::<i64>("SELECT COUNT(ctid) FROM test WHERE num < 5;");
+        assert_eq!(count, Ok(Some(5)), "Should generate 5 rows");
+    }
 }

@@ -37,42 +37,50 @@ fn get_schema_from_relation(
         let tuple_desc = (*rel).rd_att;
         let natts = (*tuple_desc).natts as usize;
         let attrs = (*tuple_desc).attrs.as_slice(natts);
-        match columns.len() {
-            0 => Box::new(Schema {
-                fields: attrs
-                    .iter()
-                    .map(|a| Attribute {
-                        column_id: a.attnum as u32,
-                        data_type: a.atttypid,
-                    })
-                    .collect::<Vec<_>>(),
-                where_clause,
-                sample_clause,
-            }),
-            _ => Box::new(Schema {
-                fields: columns
-                    .iter()
-                    .map(|column| {
-                        let attr = attrs.iter().find(|a| a.attnum == *column);
-                        match attr {
-                            Some(a) => Attribute {
-                                column_id: a.attnum as u32,
-                                data_type: a.atttypid,
-                            },
-                            None => panic!("Column not found"),
+        let fields = match columns.len() {
+            0 => attrs
+                .iter()
+                .map(|a| Attribute {
+                    column_id: a.attnum,
+                    data_type: a.atttypid,
+                })
+                .collect::<Vec<_>>(),
+            _ => columns
+                .iter()
+                .map(|column| {
+                    let attr = attrs.iter().find(|a| a.attnum == *column);
+                    match attr {
+                        Some(a) => Attribute {
+                            column_id: a.attnum,
+                            data_type: a.atttypid,
+                        },
+                        None => {
+                            if *column == -1 {
+                                Attribute {
+                                    column_id: -1,
+                                    data_type: pg_sys::TIDOID,
+                                }
+                            } else {
+                                panic!("Column not found: {}", column);
+                            }
                         }
-                    })
-                    .collect::<Vec<_>>(),
-                where_clause,
-                sample_clause,
-            }),
-        }
+                    }
+                })
+                .collect::<Vec<_>>(),
+        };
+
+        Box::new(Schema {
+            fields,
+            where_clause,
+            sample_clause,
+        })
     }
 }
 
 #[pg_guard]
 extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _estate: *mut EState, _eflags: i32) {
     unsafe {
+        info!("pg_elephantduck_begin_custom_scan");
         let elephantduck_scan_state = csstate as *mut PgElephantduckScanState;
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
         let target_list = (*(*elephantduck_scan_state).css.ss.ps.plan).targetlist;
