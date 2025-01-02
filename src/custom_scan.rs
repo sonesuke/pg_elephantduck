@@ -84,24 +84,20 @@ extern "C" fn pg_elephantduck_begin_custom_scan(csstate: *mut CustomScanState, _
         let rel = (*elephantduck_scan_state).css.ss.ss_currentRelation;
         let target_list = (*(*elephantduck_scan_state).css.ss.ps.plan).targetlist;
 
-        let where_clause = match (*elephantduck_scan_state).css.ss.ps.qual.is_null() {
-            false => Some(extract_clauses((*(*elephantduck_scan_state).css.ss.ps.qual).expr)),
-            true => None,
+        let custom_private = (*((*elephantduck_scan_state).css.ss.ps.plan as *mut CustomScan)).custom_private;
+        let elements = std::slice::from_raw_parts((*custom_private).elements, (*custom_private).length as usize);
+        let where_clause = if elements[0].ptr_value.is_null() {
+            None
+        } else {
+            Some(extract_clauses(elements[0].ptr_value as *mut Expr))
         };
 
-        let custom_private = (*((*elephantduck_scan_state).css.ss.ps.plan as *mut CustomScan)).custom_private;
-        let sample_clause = match custom_private.is_null() {
-            false => {
-                let elements =
-                    std::slice::from_raw_parts((*custom_private).elements, (*custom_private).length as usize);
-                if elements.is_empty() {
-                    None
-                } else {
-                    Some(extract_clauses(elements[0].ptr_value as *mut Expr))
-                }
-            }
-            true => None,
+        let sample_clause = if elements.len() > 1 && !elements[1].ptr_value.is_null() {
+            Some(extract_clauses(elements[1].ptr_value as *mut Expr))
+        } else {
+            None
         };
+
         let columns = if target_list.is_null() {
             Vec::<i16>::new()
         } else {
@@ -253,10 +249,6 @@ impl PgElephantDuckCustomExecMethods {
 static mut ELEPHANTDUCK_CUSTOM_EXEC_METHODS: Lazy<Mutex<PgElephantDuckCustomExecMethods>> =
     Lazy::new(|| Mutex::new(PgElephantDuckCustomExecMethods::new()));
 
-// fn dump_restrict_info(restrict_info: *mut RestrictInfo) {
-//     info!("restrict_info: {:?}", (*restrict_info).clause_relids);
-// }
-
 /// Extract actual clauses from a list of clauses
 ///
 /// * `rel` - List. The list of clauses.
@@ -281,9 +273,24 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     (*custom_scan).scan.scanrelid = (*rel).relid;
     (*custom_scan).scan.plan.targetlist = tlist;
 
-    (*custom_scan).scan.plan.qual = extract_actual_clauses(clauses, false);
-    (*custom_scan).custom_private = (*best_path).custom_private;
-
+    // Use custome_private for transfer quals.
+    // Do not use scan.plan.qual, because it forces toa add it to custom_scan_tlist.
+    // It constrains the shape of the tuple and it is necessary to allocate memory for the tuple.
+    (*custom_scan).scan.plan.qual = std::ptr::null_mut();
+    let quals = Box::leak(Box::new(ListCell {
+        ptr_value: copyObjectImpl(extract_actual_clauses(clauses, false) as *mut core::ffi::c_void),
+    }));
+    match (*best_path).custom_private.is_null() {
+        false => {
+            let tablesample = Box::leak(Box::new(ListCell {
+                ptr_value: copyObjectImpl((*best_path).custom_private as *mut core::ffi::c_void),
+            }));
+            (*custom_scan).custom_private = list_make2_impl(NodeTag::T_List, *quals, *tablesample);
+        }
+        true => {
+            (*custom_scan).custom_private = list_make1_impl(NodeTag::T_List, *quals);
+        }
+    };
     &mut ((*custom_scan).scan.plan) as *mut Plan
 }
 
