@@ -38,7 +38,7 @@ impl EpochForTime for pgrx::datum::Date {
         pgrx::datum::Date::new(year, month, day).unwrap()
     }
 
-    /// Converts `TimeWithTimeZone` to epoch time (seconds since 1970-01-01 00:00:00 UTC)
+    /// Converts `Date` to epoch time (days since 1970-01-01)
     fn to_epoch_day(&self) -> i32 {
         self.to_unix_epoch_days()
     }
