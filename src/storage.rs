@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::datetime_util::*;
 use crate::settings::{get_elephantduck_path, get_elephantduck_threads};
 
 #[derive(Debug)]
@@ -268,6 +269,9 @@ fn convert_datatype_pg_to_arrow(data_type_oid: pg_sys::Oid) -> arrow::datatypes:
         pg_sys::INT8OID => arrow::datatypes::DataType::Int64,
         pg_sys::FLOAT4OID => arrow::datatypes::DataType::Float32,
         pg_sys::FLOAT8OID => arrow::datatypes::DataType::Float64,
+        pg_sys::DATEOID => arrow::datatypes::DataType::Date32,
+        pg_sys::TIMEOID => arrow::datatypes::DataType::Time32(arrow::datatypes::TimeUnit::Second),
+        pg_sys::TIMESTAMPOID => arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Second, None),
         pg_sys::TEXTOID => arrow::datatypes::DataType::Utf8,
         pg_sys::TIDOID => arrow::datatypes::DataType::Int64,
         _ => panic!("Invalid data type {:?}", data_type_oid),
@@ -296,6 +300,19 @@ fn convert_datum_pg_to_arrow(
             pg_sys::FLOAT8OID => {
                 Arc::new(arrow::array::Float64Array::from(vec![f64::from_datum(datum, is_null)])) as ArrayRef
             }
+            pg_sys::DATEOID => Arc::new(arrow::array::Date32Array::from(vec![pgrx::datum::Date::from_datum(
+                datum, is_null,
+            )
+            .unwrap()
+            .to_epoch_day()])) as ArrayRef,
+            pg_sys::TIMEOID => Arc::new(arrow::array::Time32SecondArray::from(vec![
+                pgrx::datum::Time::from_datum(datum, is_null).unwrap().to_epoch_time() as i32,
+            ])) as ArrayRef,
+            pg_sys::TIMESTAMPOID => Arc::new(arrow::array::TimestampSecondArray::from(vec![
+                pgrx::datum::Timestamp::from_datum(datum, is_null)
+                    .unwrap()
+                    .to_epoch_time(),
+            ])) as ArrayRef,
             pg_sys::TEXTOID => Arc::new(arrow::array::StringArray::from(vec![String::from_datum(
                 datum, is_null,
             )])) as ArrayRef,
@@ -346,6 +363,23 @@ fn convert_datum_arrow_to_pg(
         arrow::datatypes::DataType::Float64 => {
             let array = field.as_any().downcast_ref::<arrow::array::Float64Array>().unwrap();
             row.datum[column_index] = array.value(current_row).into_datum().unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
+        }
+        arrow::datatypes::DataType::Date32 => {
+            let array = field.as_any().downcast_ref::<arrow::array::Date32Array>().unwrap();
+            row.datum[column_index] = pgrx::datum::Date::from_epoch_day(array.value(current_row))
+                .into_datum()
+                .unwrap();
+            row.nulls[column_index] = array.is_null(current_row);
+        }
+        arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Second, None) => {
+            let array = field
+                .as_any()
+                .downcast_ref::<arrow::array::TimestampSecondArray>()
+                .unwrap();
+            row.datum[column_index] = pgrx::datum::Timestamp::from_epoch_time(array.value(current_row))
+                .into_datum()
+                .unwrap();
             row.nulls[column_index] = array.is_null(current_row);
         }
         arrow::datatypes::DataType::Utf8 => {

@@ -6,6 +6,8 @@ use pgrx::prelude::*;
 #[pg_schema]
 #[cfg(any(test, feature = "pg_test"))]
 pub mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     fn pg_test_setup() {
@@ -171,17 +173,26 @@ pub mod tests {
         DROP TABLE IF EXISTS test;
         CREATE TABLE test (
             date DATE,
+            time TIME,
             timestamp TIMESTAMP
         ) USING elephantduck;
-        INSERT INTO test VALUES ('2024-12-06'::DATE, '2024-12-06 00:00:00'::TIMESTAMP);
+        INSERT INTO test VALUES ('2024-12-06'::DATE, '01:23:45'::TIME, '2024-12-06 01:23:45'::TIMESTAMP);
         ",
         );
 
-        let _ = Spi::get_one::<Date>("SELECT date FROM test;");
-        // assert_eq!(result_num, Ok(Some(1)), "Count should be 1");
+        let result_date = Spi::get_one::<Date>("SELECT date FROM test;");
+        assert_eq!(
+            result_date,
+            Ok(Some(Date::from_str("2024-12-06").unwrap())),
+            "It should be '2024-12-06'"
+        );
 
-        let _ = Spi::get_one::<Timestamp>("SELECT timestamp FROM test;");
-        // assert_eq!(result_float, Ok(Some(1.0)), "Count should be 1.0");
+        let result_timestamp = Spi::get_one::<Timestamp>("SELECT timestamp FROM test;");
+        assert_eq!(
+            result_timestamp,
+            Ok(Some(Timestamp::from_str("2024-12-06 01:23:45").unwrap())),
+            "Count should be '2024-12-06 01:23:45"
+        );
     }
 
     #[pg_test]

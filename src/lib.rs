@@ -6,6 +6,7 @@ use custom_scan::{finish_custom_scan, init_custom_scan};
 mod settings;
 use settings::init_gucs;
 
+mod datetime_util;
 mod extract_clauses;
 mod storage;
 mod tam;
