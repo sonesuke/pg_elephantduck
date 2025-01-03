@@ -274,7 +274,7 @@ unsafe extern "C" fn pg_elephantduck_plan_custom_path(
     (*custom_scan).scan.plan.targetlist = tlist;
 
     // Use custom_private for transfer quals.
-    // Do not use scan.plan.qual, because it forces toa add it to custom_scan_tlist.
+    // Do not use scan.plan.qual, because it forces to add it to custom_scan_tlist.
     // It constrains the shape of the tuple and it is necessary to allocate memory for the tuple.
     (*custom_scan).scan.plan.qual = std::ptr::null_mut();
     let quals = Box::leak(Box::new(ListCell {
