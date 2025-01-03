@@ -4,8 +4,10 @@ use std::ffi::CStr;
 
 fn extract_var(var: *mut Var) -> std::string::String {
     unsafe {
-        let column = format!("column_{}", (*var).varattnosyn);
-        column
+        match (*var).varattnosyn as i32 {
+            pg_sys::SelfItemPointerAttributeNumber => "file_row_number".to_string(),
+            _ => format!("column_{}", (*var).varattnosyn),
+        }
     }
 }
 
@@ -130,11 +132,17 @@ fn extract_null_test(null_test: *mut NullTest) -> std::string::String {
 fn extract_list(list: *mut List) -> std::string::String {
     unsafe {
         let elements = std::slice::from_raw_parts((*list).elements, (*list).length as usize);
-        let expressions = elements
-            .iter()
-            .map(|element| format!("({})", extract_clauses(element.ptr_value as *mut Expr)).to_string())
-            .collect::<Vec<_>>();
-        expressions.join(" AND ")
+        match elements.len() {
+            0 => "".to_string(),
+            1 => extract_clauses(elements[0].ptr_value as *mut Expr),
+            _ => {
+                let expressions = elements
+                    .iter()
+                    .map(|element| format!("({})", extract_clauses(element.ptr_value as *mut Expr)).to_string())
+                    .collect::<Vec<_>>();
+                expressions.join(" AND ")
+            }
+        }
     }
 }
 

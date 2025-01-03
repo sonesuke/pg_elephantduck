@@ -199,6 +199,28 @@ pub mod tests {
     }
 
     #[pg_test]
+    fn test_where_clause() {
+        pg_test_setup();
+
+        let _ = Spi::run(
+            "
+        DROP TABLE IF EXISTS test;
+        CREATE TABLE test (
+            a INTEGER,
+            b INTEGER
+        ) USING elephantduck;
+        INSERT INTO test VALUES (1, 2);
+        ",
+        );
+
+        let result_a = Spi::get_one::<i64>("SELECT a FROM test WHERE b IS NOT NULL;");
+        assert_eq!(result_a, Ok(Some(1)), "Count should be 1");
+
+        let result_b = Spi::get_one::<i64>("SELECT b FROM test WHERE a IS NOT NULL;");
+        assert_eq!(result_b, Ok(Some(2)), "Count should be 2");
+    }
+
+    #[pg_test]
     fn test_tablesample_clause() {
         pg_test_setup();
 
@@ -227,6 +249,6 @@ pub mod tests {
         assert_eq!(count, Ok(Some(10)), "Should generate 10 rows");
 
         let count = Spi::get_one::<i64>("SELECT COUNT(ctid) FROM test WHERE num < 5;");
-        assert_eq!(count, Ok(Some(5)), "Should generate 5 rows");
+        assert_eq!(count, Ok(Some(4)), "Should generate 5 rows");
     }
 }

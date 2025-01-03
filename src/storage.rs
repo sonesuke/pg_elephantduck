@@ -108,7 +108,6 @@ pub struct Table {
     reader: Option<DuckdbReader>,
     where_clause: Option<String>,
     sample_clause: Option<String>,
-    include_ctid: bool,
 }
 
 impl Table {
@@ -121,7 +120,6 @@ impl Table {
             reader: None,
             where_clause: None,
             sample_clause: None,
-            include_ctid: false,
         }
     }
 
@@ -139,10 +137,7 @@ impl Table {
             .map(|attr| {
                 Field::new(
                     match attr.column_id as i32 {
-                        pg_sys::SelfItemPointerAttributeNumber => {
-                            self.include_ctid = true;
-                            "file_row_number".to_string()
-                        }
+                        pg_sys::SelfItemPointerAttributeNumber => "file_row_number".to_string(),
                         _ => format!("column_{}", attr.column_id),
                     },
                     convert_datatype_pg_to_arrow(attr.data_type),
@@ -223,11 +218,7 @@ impl Table {
         if self.reader.is_none() {
             let file_path = self.get_path(self.table_id);
             let columns_clause = self.get_columns_clause();
-            let file_row_number_clause = if self.include_ctid {
-                ", file_row_number = true"
-            } else {
-                ""
-            };
+            let file_row_number_clause = ", file_row_number = true"; // TODO: Use a better way to detect this
             let mut sql = match self.get_where_clause() {
                 Some(where_clause) => format!(
                     "SELECT {} FROM parquet_scan('{}'{}) WHERE {}",
