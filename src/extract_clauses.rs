@@ -117,7 +117,7 @@ fn extract_const_expr(const_expr: *mut Const) -> std::string::String {
                 Some(result) => format!("'{}'", result),
                 None => "".to_string(),
             },
-            pg_sys::TIMESTAMPOID => match pgrx::datum::TimeWithTimeZone::from_datum(value, isnull) {
+            pg_sys::TIMESTAMPOID => match pgrx::datum::Timestamp::from_datum(value, isnull) {
                 Some(result) => format!("'{}'", result),
                 None => "".to_string(),
             },
