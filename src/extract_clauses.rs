@@ -109,8 +109,20 @@ fn extract_const_expr(const_expr: *mut Const) -> std::string::String {
                 Some(result) => result.to_string(),
                 None => "".to_string(),
             },
+            pg_sys::DATEOID => match pgrx::datum::Date::from_datum(value, isnull) {
+                Some(result) => format!("'{}'", result),
+                None => "".to_string(),
+            },
+            pg_sys::TIMEOID => match pgrx::datum::Time::from_datum(value, isnull) {
+                Some(result) => format!("'{}'", result),
+                None => "".to_string(),
+            },
+            pg_sys::TIMESTAMPOID => match pgrx::datum::TimeWithTimeZone::from_datum(value, isnull) {
+                Some(result) => format!("'{}'", result),
+                None => "".to_string(),
+            },
             pg_sys::TEXTOID => match std::string::String::from_datum(value, isnull) {
-                Some(result) => format!("'{}'", result).to_string(),
+                Some(result) => format!("'{}'", result),
                 None => "".to_string(),
             },
             _ => "".to_string(),
