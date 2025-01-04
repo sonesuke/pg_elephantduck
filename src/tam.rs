@@ -596,14 +596,11 @@ unsafe fn search_namelist(list: *mut List) -> *mut List {
 }
 
 unsafe fn pg_elephantduck_drop_table(stmt: *mut DropStmt) {
-    info!("{:?}", *stmt);
-
     let objects_ptr = (*stmt).objects;
     if objects_ptr.is_null() {
         return;
     }
 
-    info!("{:?}", (*objects_ptr).length);
     let namelist_ptr = search_namelist(objects_ptr);
 
     if namelist_ptr.is_null() {
