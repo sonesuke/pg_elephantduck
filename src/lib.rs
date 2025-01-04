@@ -6,10 +6,17 @@ use custom_scan::{finish_custom_scan, init_custom_scan};
 mod settings;
 use settings::init_gucs;
 
+mod common;
+mod reader;
+
+mod datatype_util;
 mod datetime_util;
 mod extract_clauses;
+mod pg_utils;
 mod storage;
 mod tam;
+mod writer;
+
 use tam::{finish_tam_hooks, init_tam_hooks};
 
 mod tests;

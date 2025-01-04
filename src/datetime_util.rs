@@ -1,5 +1,9 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
+const MIDNIGHT: NaiveTime = midnight();
+const EPOCH_DAY: NaiveDate = epoch_day();
+const EPOCH_TIME: NaiveDateTime = epoch_time();
+
 const fn midnight() -> NaiveTime {
     match NaiveTime::from_hms_opt(0, 0, 0) {
         Some(time) => time,
@@ -17,10 +21,6 @@ const fn epoch_day() -> NaiveDate {
 const fn epoch_time() -> NaiveDateTime {
     NaiveDateTime::new(epoch_day(), midnight())
 }
-
-const MIDNIGHT: NaiveTime = midnight();
-const EPOCH_DAY: NaiveDate = epoch_day();
-const EPOCH_TIME: NaiveDateTime = epoch_time();
 
 pub trait EpochForTime {
     fn from_epoch_day(epoch_time: i32) -> Self;

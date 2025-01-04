@@ -1,6 +1,6 @@
 // table_ access method (TM) interface
 
-use pgrx::pg_sys::*;
+use pgrx::{is_a, pg_sys::*, PgRelation};
 
 #[allow(unused_imports)]
 use pgrx::prelude::*;
@@ -8,9 +8,10 @@ use pgrx::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-use crate::storage::*;
+use crate::common::*;
+use crate::{pg_utils::*, storage::*};
 
-struct PgElephantduckAmRoutine {
+pub struct PgElephantduckAmRoutine {
     routines: TableAmRoutine,
 }
 
@@ -69,33 +70,13 @@ impl PgElephantduckAmRoutine {
         }
     }
 
-    fn get_routines(&self) -> *mut TableAmRoutine {
+    pub fn get_routines(&self) -> *mut TableAmRoutine {
         &self.routines as *const _ as *mut _
     }
 }
 
-static mut ELEPHANTDUCK_AM_ROUTINE: Lazy<Mutex<PgElephantduckAmRoutine>> =
+pub static mut ELEPHANTDUCK_AM_ROUTINE: Lazy<Mutex<PgElephantduckAmRoutine>> =
     Lazy::new(|| Mutex::new(PgElephantduckAmRoutine::new()));
-
-fn get_schema_from_relation(rel: Relation) -> Box<Schema> {
-    unsafe {
-        let tuple_desc = (*rel).rd_att;
-        let natts = (*tuple_desc).natts as usize;
-        let attrs = (*tuple_desc).attrs.as_slice(natts);
-        Box::new(Schema {
-            fields: attrs
-                .iter()
-                .filter(|attr| !attr.is_dropped())
-                .map(|a| Attribute {
-                    column_id: a.attnum,
-                    data_type: a.atttypid,
-                })
-                .collect(),
-            where_clause: None,
-            sample_clause: None,
-        })
-    }
-}
 
 // The handler function for the access method.
 // This function is called when the access method is created.
@@ -126,7 +107,7 @@ unsafe extern "C" fn pg_elephantduck_scan_begin(
     pscan: ParallelTableScanDesc,
     flags: uint32,
 ) -> TableScanDesc {
-    set_schema_for_read((*rel).rd_id.into(), *get_schema_from_relation(rel));
+    set_schema_for_read(Schema::new(PgRelation::from_pg(rel), vec![], None, None));
     let scan = Box::new(ElephantDuckScan {
         rs_base: TableScanDescData {
             rs_rd: rel,
@@ -168,18 +149,8 @@ unsafe extern "C" fn pg_elephantduck_scan_getnextslot(
     slot: *mut TupleTableSlot,
 ) -> bool {
     ExecClearTuple(slot);
-    let elephantduck_scan = scan as *mut ElephantDuckScan;
-    let relid = (*(*elephantduck_scan).rs_base.rs_rd).rd_id;
-
-    let tuple_descriptor = (*slot).tts_tupleDescriptor;
-    let natts: usize = (*tuple_descriptor).natts as usize;
-    let mut row = TupleSlot {
-        natts,
-        datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
-        nulls: std::slice::from_raw_parts_mut((*slot).tts_isnull, natts),
-    };
-
-    if read(relid.into(), &mut row) {
+    let mut row = TupleSlot::new(PgRelation::from_pg((*scan).rs_rd), *slot);
+    if read(&mut row) {
         ExecStoreVirtualTuple(slot);
         true
     } else {
@@ -292,17 +263,8 @@ unsafe extern "C" fn pg_elephantduck_tuple_insert(
     _options: std::ffi::c_int,
     _bistate: *mut BulkInsertStateData,
 ) {
-    let relid = (*rel).rd_id;
-
-    let tuple_descriptor = (*slot).tts_tupleDescriptor;
-    let natts: usize = (*tuple_descriptor).natts as usize;
-
-    let row = TupleSlot {
-        natts,
-        datum: std::slice::from_raw_parts_mut((*slot).tts_values, natts),
-        nulls: std::slice::from_raw_parts_mut((*slot).tts_isnull, natts),
-    };
-    insert_table(relid.into(), row);
+    let row = TupleSlot::new(PgRelation::from_pg(rel), *slot);
+    insert_table(row);
 }
 
 #[pg_guard]
@@ -400,8 +362,7 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
     _freeze_xid: *mut TransactionId,
     _minmulti: *mut MultiXactId,
 ) {
-    let relid = (*rel).rd_id;
-    create_table(relid.into(), *get_schema_from_relation(rel));
+    create_table(Schema::new(PgRelation::from_pg(rel), vec![], None, None));
 }
 
 #[pg_guard]
@@ -575,51 +536,6 @@ unsafe extern "C" fn pg_elephantduck_executor_finish_hook(query_desc: *mut Query
     close_tables();
 }
 
-unsafe fn search_namelist(list: *mut List) -> *mut List {
-    let mut name_list = list;
-    while !name_list.is_null() {
-        let elements = std::slice::from_raw_parts((*name_list).elements, (*name_list).length as usize);
-        if elements.is_empty() {
-            return std::ptr::null_mut();
-        }
-        let name_ptr = elements[0].ptr_value as *mut List;
-
-        if (*name_ptr).type_ == NodeTag::T_String {
-            return name_list;
-        } else if (*name_ptr).type_ == NodeTag::T_List {
-            name_list = name_ptr;
-        } else {
-            return std::ptr::null_mut();
-        }
-    }
-    std::ptr::null_mut()
-}
-
-unsafe fn pg_elephantduck_drop_table(stmt: *mut DropStmt) {
-    let objects_ptr = (*stmt).objects;
-    if objects_ptr.is_null() {
-        return;
-    }
-
-    let namelist_ptr = search_namelist(objects_ptr);
-
-    if namelist_ptr.is_null() {
-        return;
-    }
-
-    let rel = makeRangeVarFromNameList(namelist_ptr);
-    let relid = RangeVarGetRelidExtended(
-        rel,
-        AccessShareLock as i32,
-        RVROption::RVR_MISSING_OK,
-        None,
-        std::ptr::null_mut(),
-    );
-    if is_elephantduck_table(relid) {
-        drop_table(relid.into());
-    }
-}
-
 static mut PREV_EXECUTOR_FINISH_HOOK: ExecutorFinish_hook_type = None;
 
 #[allow(clippy::too_many_arguments)]
@@ -635,8 +551,18 @@ unsafe extern "C" fn pg_elephantduck_process_utility_hook(
     qc: *mut QueryCompletion,
 ) {
     let parsetree = (*pstmt).utilityStmt;
-    if !parsetree.is_null() && (*parsetree).type_ == NodeTag::T_DropStmt {
-        pg_elephantduck_drop_table(parsetree as *mut DropStmt);
+    if is_a(parsetree, NodeTag::T_DropStmt) {
+        let stmt = parsetree as *mut DropStmt;
+        let namelist_ptr = search_namelist((*stmt).objects);
+        if namelist_ptr.is_null() {
+            return;
+        }
+
+        if let Ok(relation) = PgRelation::open_from_name_list(namelist_ptr) {
+            if relation.is_elephantduck_table() {
+                drop_table(relation);
+            }
+        }
     }
 
     match PREV_PROCESS_UTILITY_HOOK {
@@ -668,19 +594,6 @@ unsafe extern "C" fn pg_elephantduck_process_utility_hook(
 }
 
 static mut PREV_PROCESS_UTILITY_HOOK: ProcessUtility_hook_type = None;
-
-pub fn is_elephantduck_table(relid: Oid) -> bool {
-    if relid == InvalidOid {
-        return false;
-    }
-
-    unsafe {
-        let rel = RelationIdGetRelation(relid);
-        let result = (*rel).rd_tableam == ELEPHANTDUCK_AM_ROUTINE.lock().unwrap().get_routines();
-        RelationClose(rel);
-        result
-    }
-}
 
 pub fn init_tam_hooks() {
     unsafe {
