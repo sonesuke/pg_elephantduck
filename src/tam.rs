@@ -575,7 +575,102 @@ unsafe extern "C" fn pg_elephantduck_executor_finish_hook(query_desc: *mut Query
     close_tables();
 }
 
+unsafe fn search_namelist(list: *mut List) -> *mut List {
+    let mut name_list = list;
+    while !name_list.is_null() {
+        let elements = std::slice::from_raw_parts((*name_list).elements, (*name_list).length as usize);
+        if elements.is_empty() {
+            return std::ptr::null_mut();
+        }
+        let name_ptr = elements[0].ptr_value as *mut List;
+
+        if (*name_ptr).type_ == NodeTag::T_String {
+            return name_list;
+        } else if (*name_ptr).type_ == NodeTag::T_List {
+            name_list = name_ptr;
+        } else {
+            return std::ptr::null_mut();
+        }
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn pg_elephantduck_drop_table(stmt: *mut DropStmt) {
+    info!("{:?}", *stmt);
+
+    let objects_ptr = (*stmt).objects;
+    if objects_ptr.is_null() {
+        return;
+    }
+
+    info!("{:?}", (*objects_ptr).length);
+    let namelist_ptr = search_namelist(objects_ptr);
+
+    if namelist_ptr.is_null() {
+        return;
+    }
+
+    let rel = makeRangeVarFromNameList(namelist_ptr);
+    let relid = RangeVarGetRelidExtended(
+        rel,
+        AccessShareLock as i32,
+        RVROption::RVR_MISSING_OK,
+        None,
+        std::ptr::null_mut(),
+    );
+    if is_elephantduck_table(relid) {
+        drop_table(relid.into());
+    }
+}
+
 static mut PREV_EXECUTOR_FINISH_HOOK: ExecutorFinish_hook_type = None;
+
+#[allow(clippy::too_many_arguments)]
+#[pg_guard]
+unsafe extern "C" fn pg_elephantduck_process_utility_hook(
+    pstmt: *mut PlannedStmt,
+    query_string: *const ::core::ffi::c_char,
+    read_only_tree: bool,
+    context: ProcessUtilityContext::Type,
+    params: ParamListInfo,
+    query_env: *mut QueryEnvironment,
+    dest: *mut DestReceiver,
+    qc: *mut QueryCompletion,
+) {
+    let parsetree = (*pstmt).utilityStmt;
+    if !parsetree.is_null() && (*parsetree).type_ == NodeTag::T_DropStmt {
+        pg_elephantduck_drop_table(parsetree as *mut DropStmt);
+    }
+
+    match PREV_PROCESS_UTILITY_HOOK {
+        Some(prev_hook) => {
+            prev_hook(
+                pstmt,
+                query_string,
+                read_only_tree,
+                context,
+                params,
+                query_env,
+                dest,
+                qc,
+            );
+        }
+        None => {
+            standard_ProcessUtility(
+                pstmt,
+                query_string,
+                read_only_tree,
+                context,
+                params,
+                query_env,
+                dest,
+                qc,
+            );
+        }
+    }
+}
+
+static mut PREV_PROCESS_UTILITY_HOOK: ProcessUtility_hook_type = None;
 
 pub fn is_elephantduck_table(relid: Oid) -> bool {
     if relid == InvalidOid {
@@ -594,11 +689,15 @@ pub fn init_tam_hooks() {
     unsafe {
         PREV_EXECUTOR_FINISH_HOOK = ExecutorFinish_hook;
         ExecutorFinish_hook = Some(pg_elephantduck_executor_finish_hook);
+
+        PREV_PROCESS_UTILITY_HOOK = ProcessUtility_hook;
+        ProcessUtility_hook = Some(pg_elephantduck_process_utility_hook);
     }
 }
 
 pub fn finish_tam_hooks() {
     unsafe {
         ExecutorFinish_hook = PREV_EXECUTOR_FINISH_HOOK;
+        ProcessUtility_hook = PREV_PROCESS_UTILITY_HOOK;
     }
 }

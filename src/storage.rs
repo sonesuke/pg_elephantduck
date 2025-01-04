@@ -257,6 +257,11 @@ impl Table {
         self.writer = None;
         self.reader = None;
     }
+
+    pub fn drop(&mut self) {
+        let file_path = self.get_path(self.table_id);
+        let _ = std::fs::remove_file(file_path);
+    }
 }
 
 static mut VIRTUAL_STORAGE: LazyLock<Mutex<HashMap<u32, Table>>> =
@@ -446,6 +451,17 @@ pub fn read(table_id: u32, row: &mut TupleSlot) -> bool {
                 None => false,
             },
             Err(_) => false,
+        }
+    }
+}
+
+pub fn drop_table(table_id: u32) {
+    unsafe {
+        if let Ok(mut storage) = VIRTUAL_STORAGE.lock() {
+            if let Some(mut table) = storage.remove(&table_id) {
+                table.close();
+                table.drop();
+            }
         }
     }
 }
