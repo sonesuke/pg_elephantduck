@@ -1,3 +1,4 @@
+use pgrx::list::*;
 use pgrx::pg_sys::{self, *};
 use pgrx::*;
 use std::ffi::CStr;
@@ -13,11 +14,10 @@ fn extract_var(var: *mut Var) -> std::string::String {
 
 fn extract_bool_expr(bool_expr: *mut BoolExpr) -> std::string::String {
     unsafe {
-        let args = (*bool_expr).args;
-        let elements = std::slice::from_raw_parts((*args).elements, (*args).length as usize);
-        let expressions = elements
-            .iter()
-            .map(|element| format!("({})", extract_clauses(element.ptr_value as *mut Expr)).to_string())
+        let args = PgList::<Expr>::from_pg((*bool_expr).args);
+        let expressions = args
+            .iter_ptr()
+            .map(|element| format!("({})", extract_clauses(element)).to_string())
             .collect::<Vec<_>>();
 
         match (*bool_expr).boolop {
@@ -37,11 +37,11 @@ fn extract_op_expr(op_expr: *mut OpExpr) -> std::string::String {
         let opname = CStr::from_ptr(get_opname((*op_expr).opno))
             .to_string_lossy()
             .into_owned();
-        let args = (*op_expr).args;
-        let elements = std::slice::from_raw_parts((*args).elements, (*args).length as usize);
-        let expressions = elements
-            .iter()
-            .map(|element| format!("({})", extract_clauses(element.ptr_value as *mut Expr)).to_string())
+        let args = PgList::<Expr>::from_pg((*op_expr).args);
+
+        let expressions = args
+            .iter_ptr()
+            .map(|element| format!("({})", extract_clauses(element)))
             .collect::<Vec<_>>();
 
         match opname.as_str() {
@@ -141,16 +141,16 @@ fn extract_null_test(null_test: *mut NullTest) -> std::string::String {
     }
 }
 
-fn extract_list(list: *mut List) -> std::string::String {
+fn extract_list(list: *mut pg_sys::List) -> std::string::String {
     unsafe {
-        let elements = std::slice::from_raw_parts((*list).elements, (*list).length as usize);
+        let elements = PgList::<Expr>::from_pg(list);
         match elements.len() {
             0 => "".to_string(),
-            1 => extract_clauses(elements[0].ptr_value as *mut Expr),
+            1 => extract_clauses(elements.head().unwrap()),
             _ => {
                 let expressions = elements
-                    .iter()
-                    .map(|element| format!("({})", extract_clauses(element.ptr_value as *mut Expr)).to_string())
+                    .iter_ptr()
+                    .map(|element| format!("({})", extract_clauses(element)))
                     .collect::<Vec<_>>();
                 expressions.join(" AND ")
             }
@@ -160,12 +160,10 @@ fn extract_list(list: *mut List) -> std::string::String {
 
 fn extract_tablesample(tablesample: *mut TableSampleClause) -> std::string::String {
     unsafe {
-        let args_ptr = (*tablesample).args;
-        let args = std::slice::from_raw_parts((*args_ptr).elements, (*args_ptr).length as usize);
         let repeatable = (*tablesample).repeatable;
-        let args = args
-            .iter()
-            .map(|e| extract_clauses(e.ptr_value as *mut Expr))
+        let args = PgList::<Expr>::from_pg((*tablesample).args)
+            .iter_ptr()
+            .map(extract_clauses)
             .collect::<Vec<std::string::String>>()
             .join(", ");
         match repeatable.is_null() {
@@ -181,7 +179,7 @@ fn extract_tablesample(tablesample: *mut TableSampleClause) -> std::string::Stri
 pub fn extract_clauses(expr: *mut Expr) -> std::string::String {
     unsafe {
         match (*expr).type_ {
-            NodeTag::T_List => extract_list(expr as *mut List),
+            NodeTag::T_List => extract_list(expr as *mut pg_sys::List),
             NodeTag::T_Var => extract_var(expr as *mut Var),
             NodeTag::T_OpExpr => extract_op_expr(expr as *mut OpExpr),
             NodeTag::T_BoolExpr => extract_bool_expr(expr as *mut BoolExpr),
