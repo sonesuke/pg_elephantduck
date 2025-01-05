@@ -362,7 +362,7 @@ unsafe extern "C" fn pg_elephantduck_relation_set_new_filelocator(
     _freeze_xid: *mut TransactionId,
     _minmulti: *mut MultiXactId,
 ) {
-    create_table(Schema::new(PgRelation::from_pg(rel), vec![], None, None));
+    create_table(&Schema::new(PgRelation::from_pg(rel), vec![], None, None));
 }
 
 #[pg_guard]

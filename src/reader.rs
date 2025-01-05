@@ -29,7 +29,7 @@ fn get_columns_clause(arrow_schema: &ArrowSchema) -> String {
 }
 
 impl DuckdbReader {
-    pub fn new(schema: Schema) -> Self {
+    pub fn new(schema: &Schema) -> Self {
         let file_path = schema.get_path();
         let arrow_schema = schema.get_arrow_schema();
         let columns_clause = get_columns_clause(&arrow_schema);
